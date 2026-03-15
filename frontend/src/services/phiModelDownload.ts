@@ -1,9 +1,10 @@
 /**
  * Download Phi 3.5 mini GGUF to app document directory for on-device LLM.
  * Uses Q2_K quantization (~1.4 GB) for mobile.
+ * Uses expo-file-system/legacy so documentDirectory/cacheDirectory are available on native.
  */
 
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 
 const MODEL_FILENAME = "Phi-3.5-mini-instruct-Q2_K.gguf";
 const DOWNLOAD_URL =
@@ -17,12 +18,36 @@ export interface DownloadState {
 }
 
 /**
+ * Get a writable directory for the model (documentDirectory, or cacheDirectory as fallback).
+ * Retries a few times in case the native module is not ready yet.
+ */
+async function getModelDirectoryAsync(): Promise<string> {
+  const maxAttempts = 3;
+  const delayMs = 400;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const dir = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
+    if (dir && dir.trim()) return dir.replace(/\/*$/, "").replace(/\/$/, "") || dir.trim();
+    if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  throw new Error(
+    "Storage not available. Restart the app and try again, or use a device build (not Expo Go web)."
+  );
+}
+
+function getModelDirectorySync(): string {
+  const dir = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
+  if (!dir || !dir.trim())
+    throw new Error(
+      "Storage not available. Restart the app and try again, or use a device build (not Expo Go web)."
+    );
+  return dir.replace(/\/*$/, "").trim() || dir.trim();
+}
+
+/**
  * Get the path where the model should live. Does not check if file exists.
  */
 export function getModelPath(): string {
-  const dir = FileSystem.documentDirectory;
-  if (!dir) throw new Error("No document directory");
-  return `${dir.replace(/\/$/, "")}/${MODEL_FILENAME}`;
+  return `${getModelDirectorySync()}/${MODEL_FILENAME}`;
 }
 
 /**
@@ -45,8 +70,8 @@ export async function isModelDownloaded(): Promise<boolean> {
 export async function downloadPhiModel(
   onProgress?: (progress: number) => void
 ): Promise<{ path: string }> {
-  const path = getModelPath();
-  const dir = path.replace(/\/[^/]+$/, "");
+  const dir = await getModelDirectoryAsync();
+  const path = `${dir}/${MODEL_FILENAME}`;
   const dirInfo = await FileSystem.getInfoAsync(dir);
   if (!dirInfo.exists) {
     await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
