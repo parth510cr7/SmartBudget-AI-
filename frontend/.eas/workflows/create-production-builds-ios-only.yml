@@ -1,0 +1,9 @@
+# iOS production build only. Use to conserve EAS iOS build quota.
+name: Create Production Build (iOS only)
+
+jobs:
+  build_ios:
+    type: build
+    params:
+      platform: ios
+      profile: production

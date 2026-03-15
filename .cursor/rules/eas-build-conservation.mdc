@@ -1,0 +1,32 @@
+---
+description: Conserve iOS EAS builds; only recommend a build when native testing is required
+alwaysApply: true
+---
+
+# EAS Build Conservation (iOS)
+
+**Constraint:** Windows + iPhone, limited iOS EAS builds. Do not waste builds.
+
+## For every task
+
+1. **Label:** Is this **JS-only / Expo Go testable** or **Native-change / custom build required**?
+2. **If recommending an iOS build**, you must state:
+   - Why it **cannot** be tested in Expo Go
+   - Which **native module or behavior** changed
+   - What **exact feature** to test on device
+   - **Success criteria** before using another build
+3. If you cannot answer those four points, **do NOT recommend a build**.
+
+## Testing layers
+
+- **Layer A (JS-only):** UI, layout, API, state, navigation, modals, lists, receipt pipeline logic, model download UI → test in **Expo Go**. No build.
+- **Layer B (Native milestone):** llama.rn, OCR/camera, file-system/model load, native modules → **one** iOS build when milestone is ready.
+- **Layer C (QA):** Full device QA after a native milestone → one build.
+
+## Local LLM / Phi-3.5
+
+Complete all non-build work first (abstraction, settings UI, download flow, pipeline wiring). Only then recommend **one** iOS build to test: llama.rn, GGUF load, init, first inference.
+
+## Response format
+
+Include: Task summary | **Expo Go testable?** yes/no | If no: why native required | What to complete before build | **Spend build now or wait?**

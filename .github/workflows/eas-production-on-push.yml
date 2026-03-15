@@ -1,17 +1,25 @@
-# Run EAS production builds (Android + iOS) on every push to main.
-# Requires: GitHub repo, EXPO_TOKEN in Settings → Secrets and variables → Actions.
+# EAS production builds — MANUAL ONLY to conserve iOS build quota.
+# Do NOT trigger on push. Run from Actions tab when you need a build.
+# Requires: EXPO_TOKEN in repo Secrets.
 
-name: EAS Production Build on Push
+name: EAS Production Build (manual)
 
 on:
-  push:
-    branches:
-      - main
-      - master
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Platform to build"
+        required: true
+        default: "ios"
+        type: choice
+        options:
+          - ios
+          - android
+          - both
 
 jobs:
   eas-build:
-    name: EAS Production Build (Android + iOS)
+    name: EAS Production Build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -43,5 +51,14 @@ jobs:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Run EAS production workflow
+      - name: Run EAS production workflow (iOS only)
+        if: inputs.platform == 'ios'
+        run: npx eas-cli@latest workflow:run create-production-builds-ios-only.yml --non-interactive
+
+      - name: Run EAS production workflow (Android only)
+        if: inputs.platform == 'android'
+        run: npx eas-cli@latest workflow:run create-production-builds-android-only.yml --non-interactive
+
+      - name: Run EAS production workflow (both)
+        if: inputs.platform == 'both'
         run: npx eas-cli@latest workflow:run create-production-builds.yml --non-interactive

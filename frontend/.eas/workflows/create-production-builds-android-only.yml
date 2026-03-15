@@ -1,0 +1,9 @@
+# Android production build only.
+name: Create Production Build (Android only)
+
+jobs:
+  build_android:
+    type: build
+    params:
+      platform: android
+      profile: production
