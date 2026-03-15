@@ -1,0 +1,66 @@
+diff --git a/node_modules/expo-text-extractor/ios/ExpoTextExtractorModule.swift b/node_modules/expo-text-extractor/ios/ExpoTextExtractorModule.swift
+index 102a7a0..f92eb32 100644
+--- a/node_modules/expo-text-extractor/ios/ExpoTextExtractorModule.swift
++++ b/node_modules/expo-text-extractor/ios/ExpoTextExtractorModule.swift
+@@ -1,5 +1,6 @@
+ import ExpoModulesCore
+ import Vision
++import ImageIO
+ 
+ public class ExpoTextExtractorModule: Module {
+     public func definition() -> ModuleDefinition {
+@@ -16,20 +17,34 @@ public class ExpoTextExtractorModule: Module {
+                 guard let cgImage = image?.cgImage else {
+                     throw Exception.init(name: "err", description: "err")
+                 }
++                let orientation = imageOrientationToCGImagePropertyOrientation(image?.imageOrientation ?? .up)
+ 
+-                let requestHandler = VNImageRequestHandler(cgImage: cgImage)
++                let requestHandler = VNImageRequestHandler(cgImage: cgImage, orientation: orientation, options: [:])
+                 let request = VNRecognizeTextRequest { (request, error ) in
+                     guard let observations = request.results as? [VNRecognizedTextObservation] else {
+                         return promise.resolve([])
+                     }
+ 
+-                    let recognizedTexts = observations.compactMap { observation in
++                    // Preserve full receipt: sort by position top-to-bottom (Vision uses bottom-left origin, so higher y = higher on page).
++                    let sortedObservations = observations.sorted { a, b in
++                        let ya = a.boundingBox.origin.y
++                        let yb = b.boundingBox.origin.y
++                        if abs(ya - yb) > 0.01 { return ya > yb }
++                        return a.boundingBox.origin.x < b.boundingBox.origin.x
++                    }
++
++                    let recognizedTexts = sortedObservations.compactMap { observation in
+                         observation.topCandidates(1).first?.string
+                     }
+ 
+                     promise.resolve(recognizedTexts)
+                 }
+ 
++                // Use .accurate so the full document is recognized; .fast can return only partial text.
++                request.recognitionLevel = .accurate
++                request.usesLanguageCorrection = false
++                request.recognitionLanguages = ["en-US"]
++
+                 try requestHandler.perform([request])
+             } catch {
+                 promise.reject(error)
+@@ -37,3 +52,17 @@ public class ExpoTextExtractorModule: Module {
+         }
+     }
+ }
++
++private func imageOrientationToCGImagePropertyOrientation(_ ui: UIImage.Orientation) -> CGImagePropertyOrientation {
++    switch ui {
++    case .up: return .up
++    case .down: return .down
++    case .left: return .left
++    case .right: return .right
++    case .upMirrored: return .upMirrored
++    case .downMirrored: return .downMirrored
++    case .leftMirrored: return .leftMirrored
++    case .rightMirrored: return .rightMirrored
++    @unknown default: return .up
++    }
++}

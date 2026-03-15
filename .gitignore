@@ -1,0 +1,12 @@
+# Dependencies
+node_modules/
+
+# Env and secrets
+.env
+.env.local
+*.pem
+
+# Build / IDE
+dist/
+.expo/
+*.log

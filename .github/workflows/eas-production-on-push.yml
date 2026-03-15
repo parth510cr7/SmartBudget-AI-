@@ -1,0 +1,47 @@
+# Run EAS production builds (Android + iOS) on every push to main.
+# Requires: GitHub repo, EXPO_TOKEN in Settings → Secrets and variables → Actions.
+
+name: EAS Production Build on Push
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  eas-build:
+    name: EAS Production Build (Android + iOS)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        continue-on-error: true
+
+      - name: Install dependencies (fallback)
+        if: failure()
+        run: npm install
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Run EAS production workflow
+        run: npx eas-cli@latest workflow:run create-production-builds.yml --non-interactive

@@ -1,0 +1,384 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "library"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                    String                 @id @default(uuid())
+  firebaseId            String                 @unique
+  email                 String                 @unique
+  name                  String?
+  displayName           String?
+  avatarUrl             String?
+  themePreference       String                 @default("system")
+  customCategories      String[]
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  stores                Store[]
+  receipts              Receipt[]
+  smartLists            SmartList[]
+  medicalFolders        MedicalFolder[]
+  incomes               Income[]
+  recurringPayments     RecurringPayment[]
+  groupsOwned           Group[]
+  groupMemberships      GroupMember[]
+  subscriptions         Subscription[]
+  budgetSettings        BudgetSettings?
+  expensesPaid          Expense[]              @relation("ExpensePaidBy")
+  expensesCreated       Expense[]              @relation("ExpenseCreatedBy")
+  expenseSplits         ExpenseSplit[]
+  activityLogs          ActivityLog[]
+  paymentsSent          Payment[]              @relation("PaymentPayer")
+  paymentsReceived      Payment[]              @relation("PaymentReceiver")
+  balancesAsUser1       Balance[]              @relation("BalanceUser1")
+  balancesAsUser2       Balance[]              @relation("BalanceUser2")
+  priceRecords          PriceRecord[]
+  priceRecordsCreated   PriceRecord[]       @relation("PriceRecordCreatedBy")
+  priceSharePermissions PriceSharePermission[]
+  isCommunityOptIn      Boolean    @default(true)
+}
+
+model Store {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  address   String?
+  lat       Float?
+  lng       Float?
+  createdAt DateTime  @default(now())
+  receipts  Receipt[]
+
+  @@unique([userId, name])
+}
+
+model Receipt {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeId   String
+  store     Store     @relation(fields: [storeId], references: [id])
+  groupId   String?
+  group     Group?    @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  date      DateTime
+  subtotal  Float
+  tax       Float
+  total     Float
+  imageUrl  String?
+  /** VERIFIED = trusted for analytics; NEEDS_REVIEW = visible in Library but excluded from spend totals. */
+  status    String    @default("VERIFIED")
+  /** Pipeline that produced this receipt: "local" | "local_ai_repair" | "cloud". */
+  extractionSource String?
+  /** Debug snapshot: ocrLength, localModelInvoked, cloudFallbackInvoked, overallConfidence, etc. */
+  pipelineDebug     Json?
+  createdAt DateTime  @default(now())
+  items     Item[]
+  expenses  Expense[]
+}
+
+model Item {
+  id         String   @id @default(uuid())
+  receiptId  String
+  receipt    Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  name       String
+  rawName    String
+  quantity   Float
+  unit       String? // e.g. "g", "kg", "lb", "oz", "ml", "L", "item" – for price-per-unit comparison
+  unitPrice  Float
+  totalPrice Float
+  category   String
+  createdAt  DateTime @default(now())
+
+  @@index([name])
+}
+
+model SmartList {
+  id        String          @id @default(uuid())
+  userId    String
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  items     SmartListItem[]
+}
+
+model SmartListItem {
+  id          String    @id @default(uuid())
+  smartListId String
+  smartList   SmartList @relation(fields: [smartListId], references: [id], onDelete: Cascade)
+  name        String
+  quantity    Float     @default(1)
+}
+
+model Income {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Float
+  source    String
+  date      DateTime
+  createdAt DateTime @default(now())
+}
+
+model RecurringPayment {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  amount      Float
+  category    String
+  frequency   String
+  nextDueDate DateTime
+  createdAt   DateTime @default(now())
+}
+
+model MedicalFolder {
+  id          String           @id @default(uuid())
+  userId      String
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  patientName String
+  createdAt   DateTime         @default(now())
+  expenses    MedicalExpense[]
+  records     MedicalRecord[]
+
+  @@unique([userId, patientName])
+}
+
+model MedicalRecord {
+  id        String        @id @default(uuid())
+  folderId  String
+  folder    MedicalFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  date      DateTime
+  notes     String?
+  createdAt DateTime      @default(now())
+}
+
+model MedicalExpense {
+  id           String        @id @default(uuid())
+  folderId     String
+  folder       MedicalFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  itemName     String
+  price        Float
+  date         DateTime
+  storeName    String?
+  storeAddress String?
+  createdAt    DateTime      @default(now())
+}
+
+model Group {
+  id           String        @id @default(uuid())
+  name         String
+  type         String        @default("Other")
+  description  String?
+  currency     String?       @default("USD")
+  ownerId      String
+  owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  members      GroupMember[]
+  receipts     Receipt[]
+  expenses     Expense[]
+  activityLogs ActivityLog[]
+  inviteLinks  GroupInviteLink[]
+}
+
+model GroupInviteLink {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  groupId   String
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([groupId])
+}
+
+model GroupMember {
+  id      String @id @default(uuid())
+  groupId String
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role    String @default("MEMBER")
+
+  @@unique([groupId, userId])
+}
+
+model Expense {
+  id              String         @id @default(uuid())
+  description     String
+  amount          Float
+  paidByUserId    String
+  paidBy          User           @relation("ExpensePaidBy", fields: [paidByUserId], references: [id], onDelete: Cascade)
+  createdByUserId String?
+  createdBy       User?          @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  groupId         String
+  group           Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  receiptId       String?
+  receipt         Receipt?       @relation(fields: [receiptId], references: [id], onDelete: SetNull)
+  receiptUrl      String?
+  category        String?
+  createdAt       DateTime       @default(now())
+  splits          ExpenseSplit[]
+
+  @@unique([receiptId, groupId])
+}
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  groupId   String
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String
+  createdAt DateTime @default(now())
+}
+
+model ExpenseSplit {
+  id         String  @id @default(uuid())
+  expenseId  String
+  expense    Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amountOwed Float
+
+  @@unique([expenseId, userId])
+}
+
+model Payment {
+  id         String   @id @default(uuid())
+  payerId    String
+  payer      User     @relation("PaymentPayer", fields: [payerId], references: [id], onDelete: Cascade)
+  receiverId String
+  receiver   User     @relation("PaymentReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  groupId    String
+  amount     Float
+  createdAt  DateTime @default(now())
+}
+
+model Balance {
+  id            String   @id @default(uuid())
+  user1Id       String
+  user1         User     @relation("BalanceUser1", fields: [user1Id], references: [id], onDelete: Cascade)
+  user2Id       String
+  user2         User     @relation("BalanceUser2", fields: [user2Id], references: [id], onDelete: Cascade)
+  groupId       String
+  balanceAmount Float
+  updatedAt     DateTime @updatedAt
+
+  @@unique([user1Id, user2Id, groupId])
+}
+
+model Subscription {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  amount      Float?
+  frequency   String?
+  nextDueDate DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model BudgetSettings {
+  id               String    @id @default(uuid())
+  userId           String    @unique
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weeklyBudget     Float?
+  weeklyAvgSpend   Float?
+  lastCalculatedAt DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+// ----- Price Intelligence Engine (Phase 1) -----
+enum ShareMode {
+  NONE
+  PRIVATE
+  GROUP
+  COMMUNITY
+}
+
+model PriceRecord {
+  id              String  @id @default(uuid())
+  sourceReceiptId String?
+  ownerUserId     String
+  createdByUserId String?
+  user            User    @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  createdBy       User?   @relation("PriceRecordCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  shareMode        ShareMode @default(NONE)
+  groupId          String?
+  sharedWithUserId String?
+
+  rawStoreName       String?
+  canonicalStoreName String?
+  storeName          String
+  rawItemName        String
+  canonicalItemName  String?
+  itemCategory       String?
+  brandName          String?
+
+  price               Float
+  quantity            Float?  @default(1.0)
+  unit                String? @default("item")
+  normalizedUnitPrice Float?
+  currency            String  @default("USD")
+
+  purchaseDate    DateTime
+  cityOrArea      String?
+  confidenceScore Float?   @default(1.0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerUserId])
+  @@index([createdByUserId])
+  @@index([shareMode])
+  @@index([groupId])
+  @@index([canonicalItemName])
+  @@index([canonicalStoreName])
+}
+
+model PriceSharePermission {
+  id             String    @id @default(uuid())
+  ownerUserId    String
+  user           User      @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  targetUserId   String?
+  targetGroupId  String?
+  permissionType String    @default("PRIVATE_SHARE")
+  shareScope     String
+  scopeConfig    Json?
+  createdAt      DateTime  @default(now())
+  revokedAt      DateTime?
+
+  @@index([targetUserId])
+  @@index([ownerUserId])
+}
+
+model CommunityPriceAggregate {
+  id                 String   @id @default(uuid())
+  canonicalItemName  String
+  canonicalStoreName String?
+  regionBucket       String
+
+  averagePrice   Float
+  lowestPrice    Float
+  highestPrice   Float
+  dataPointCount Int
+
+  lastCalculatedAt DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([canonicalItemName, canonicalStoreName, regionBucket])
+  @@index([canonicalItemName])
+  @@index([regionBucket])
+}

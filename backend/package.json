@@ -1,0 +1,48 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "SmartBudget AI backend",
+  "main": "server.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node-dev --respawn src/index.ts",
+    "start": "node server.js",
+    "start:dist": "node dist/index.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@prisma/adapter-pg": "^7.4.2",
+    "@prisma/client": "^7.5.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "firebase-admin": "^10.3.0",
+    "fuse.js": "^7.1.0",
+    "multer": "^2.1.1",
+    "pg": "^8.19.0",
+    "socket.io": "^4.8.3"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jest": "^30.0.0",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^25.3.3",
+    "@types/supertest": "^7.2.0",
+    "dotenv": "^17.3.1",
+    "jest": "^30.3.0",
+    "prisma": "^7.5.0",
+    "supertest": "^7.2.2",
+    "ts-jest": "^29.4.6",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.9.3"
+  }
+}
