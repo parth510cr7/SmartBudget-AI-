@@ -15,11 +15,13 @@ export interface UnifiedReceiptItem {
   unitPrice: number;
   totalPrice: number;
   category: string;
+  subcategory?: string | null;
   confidence: number;
 }
 
 export interface UnifiedReceiptResult {
   merchantName: string;
+  merchantAddress?: string | null;
   purchaseDate: string;
   subtotal: number;
   tax: number;
@@ -38,7 +40,8 @@ export function toUnifiedItem(
   unitPrice: number,
   totalPrice: number,
   category: string,
-  confidence: number = 1
+  confidence: number = 1,
+  subcategory?: string | null
 ): UnifiedReceiptItem {
   return {
     rawText: rawName,
@@ -48,6 +51,7 @@ export function toUnifiedItem(
     unitPrice,
     totalPrice,
     category: category || "Other",
+    subcategory: subcategory ?? undefined,
     confidence,
   };
 }
@@ -61,10 +65,12 @@ export function toUnifiedResult(
   items: UnifiedReceiptItem[],
   overallConfidence: OverallConfidence,
   extractionSource: ExtractionSource,
-  reviewStatus: ReviewStatus
+  reviewStatus: ReviewStatus,
+  merchantAddress?: string | null
 ): UnifiedReceiptResult {
   return {
     merchantName,
+    merchantAddress: merchantAddress ?? undefined,
     purchaseDate,
     subtotal,
     tax,

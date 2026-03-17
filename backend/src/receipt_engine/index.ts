@@ -6,7 +6,7 @@
 import { normalizeReceiptText } from "./receiptNormalizer";
 import { parseReceiptMeta, extractTotalCandidates } from "./receiptParser";
 import { extractItems, type ExtractedItem } from "./itemExtractor";
-import { categorizeItem } from "./categoryEngine";
+import { categorizeItem, getSubcategoryForItem } from "./categoryEngine";
 import { setLastReceiptDebug, isReceiptDebugEnabled, getLastReceiptDebug } from "./receiptDebug";
 
 export interface EngineItem {
@@ -17,10 +17,12 @@ export interface EngineItem {
   unitPrice: number;
   totalPrice: number;
   category: string;
+  subcategory?: string | null;
 }
 
 export interface EngineResult {
   storeName: string;
+  storeAddress?: string | null;
   date: string;
   subtotal: number;
   tax: number;
@@ -44,6 +46,7 @@ export async function processReceiptText(rawText: string): Promise<EngineResult>
 
   for (const item of extracted) {
     const category = await categorizeItem(item.name, storeName);
+    const subcategory = getSubcategoryForItem(item.name, category || "Other");
     items.push({
       name: item.name,
       rawName: item.rawName,
@@ -52,6 +55,7 @@ export async function processReceiptText(rawText: string): Promise<EngineResult>
       unitPrice: item.unitPrice,
       totalPrice: item.totalPrice,
       category: category || "Other",
+      subcategory: subcategory ?? undefined,
     });
   }
 
@@ -81,6 +85,7 @@ export async function processReceiptText(rawText: string): Promise<EngineResult>
 
   return {
     storeName,
+    storeAddress: meta.storeAddress ?? undefined,
     date,
     subtotal: meta.subtotal,
     tax: meta.tax,
@@ -94,6 +99,6 @@ export async function processReceiptText(rawText: string): Promise<EngineResult>
 export { normalizeReceiptText } from "./receiptNormalizer";
 export { parseReceiptMeta } from "./receiptParser";
 export { extractItems } from "./itemExtractor";
-export { categorizeItem, invalidateCategoryCaches } from "./categoryEngine";
+export { categorizeItem, getSubcategoryForItem, invalidateCategoryCaches } from "./categoryEngine";
 export { saveUserRule, categorizeWithAI } from "./aiCategorizer";
 export { getLastReceiptDebug, setLastReceiptDebug, isReceiptDebugEnabled } from "./receiptDebug";

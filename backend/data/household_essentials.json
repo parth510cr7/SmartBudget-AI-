@@ -1,0 +1,80 @@
+{
+  "masterCategory": "Household Essentials",
+  "categories": [
+    {
+      "name": "Groceries",
+      "subcategories": [
+        { "name": "Staples", "items": ["Rice", "Flour / atta", "Pasta / noodles", "Oats", "Cereal", "Bread", "Sugar", "Salt", "Cooking oil", "Butter / ghee", "Spices", "Lentils / beans"] },
+        { "name": "Dairy & Eggs", "items": ["Milk", "Yogurt", "Cheese", "Eggs", "Cream", "Paneer / cottage cheese"] },
+        { "name": "Produce", "items": ["Potatoes", "Onions", "Tomatoes", "Garlic", "Ginger", "Carrots", "Bananas", "Apples", "Lemons", "Seasonal vegetables", "Seasonal fruit"] },
+        { "name": "Protein", "items": ["Chicken", "Fish", "Ground meat", "Tofu", "Paneer", "Beans", "Lentils"] },
+        { "name": "Frozen & Backup", "items": ["Frozen vegetables", "Frozen fruit", "Frozen meals", "Frozen breads / parathas"] },
+        { "name": "Drinks & Pantry Extras", "items": ["Tea", "Coffee", "Juice", "Snacks", "Crackers", "Biscuits"] }
+      ]
+    },
+    {
+      "name": "Household",
+      "subcategories": [
+        { "name": "Cleaning Supplies", "items": ["Dish soap", "Dishwasher pods", "Laundry detergent", "Fabric softener", "Stain remover", "All-purpose cleaner", "Bathroom cleaner", "Glass cleaner", "Floor cleaner", "Disinfecting wipes", "Sponges", "Scrub pads"] },
+        { "name": "Paper & Disposable Products", "items": ["Toilet paper", "Paper towels", "Tissues", "Napkins", "Garbage bags", "Aluminum foil", "Plastic wrap", "Parchment paper", "Zip bags"] },
+        { "name": "Kitchen Consumables", "items": ["Food containers", "Trash liners", "Coffee filters", "Water filters"] },
+        { "name": "Utility Basics", "items": ["Batteries", "Light bulbs", "Air freshener", "Pest control items"] }
+      ]
+    },
+    {
+      "name": "Health",
+      "subcategories": [
+        { "name": "Medicines", "items": ["Pain relievers", "Cold medicine", "Flu medicine", "Cough syrup", "Allergy medicine", "Antacids", "Prescription refills"] },
+        { "name": "First Aid", "items": ["Bandages", "Antiseptic cream", "Gauze", "Medical tape", "Thermometer", "Masks"] },
+        { "name": "Vitamins & Wellness", "items": ["Multivitamins", "Vitamin D", "Vitamin C", "Supplements", "Electrolyte drinks"] },
+        { "name": "Women's / Family Health", "items": ["Sanitary pads", "Tampons", "Child fever medicine", "Oral rehydration products"] }
+      ]
+    },
+    {
+      "name": "Personal Care",
+      "subcategories": [
+        { "name": "Oral Care", "items": ["Toothpaste", "Toothbrush", "Mouthwash", "Floss"] },
+        { "name": "Bath & Body", "items": ["Soap", "Body wash", "Shampoo", "Conditioner", "Lotion", "Moisturizer", "Deodorant"] },
+        { "name": "Grooming", "items": ["Razors", "Shaving cream", "Hair oil", "Hair products", "Cotton pads", "Nail care"] },
+        { "name": "Hygiene", "items": ["Hand soap", "Hand sanitizer", "Wet wipes", "Feminine hygiene products"] }
+      ]
+    },
+    {
+      "name": "Baby",
+      "subcategories": [
+        { "name": "Feeding", "items": ["Formula", "Baby food", "Bottles", "Bottle liners", "Feeding accessories"] },
+        { "name": "Diapering", "items": ["Diapers", "Baby wipes", "Rash cream", "Changing pads"] },
+        { "name": "Baby Care", "items": ["Baby shampoo", "Baby lotion", "Baby soap", "Baby powder", "Teething products"] },
+        { "name": "Health & Safety", "items": ["Baby medicine", "Thermometer", "Nasal care products", "Baby sunscreen"] }
+      ]
+    },
+    {
+      "name": "Pet",
+      "subcategories": [
+        { "name": "Food", "items": ["Dry food", "Wet food", "Treats", "Supplements"] },
+        { "name": "Hygiene & Care", "items": ["Pet shampoo", "Grooming supplies", "Waste bags", "Litter", "Litter liners"] },
+        { "name": "Health", "items": ["Flea / tick products", "Pet medicine", "Dental care products"] },
+        { "name": "Daily Supplies", "items": ["Pee pads", "Bowls", "Cleaning spray for pet mess"] }
+      ]
+    }
+  ],
+  "trackingFields": [
+    "master_category",
+    "category",
+    "subcategory",
+    "item_name",
+    "brand",
+    "size",
+    "quantity_bought",
+    "unit",
+    "store",
+    "price_paid",
+    "unit_price",
+    "purchase_date",
+    "sale_or_regular",
+    "essential_level",
+    "repeat_frequency",
+    "notes"
+  ],
+  "essentialLevels": ["Critical", "Regular", "Flexible"]
+}

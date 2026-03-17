@@ -20,25 +20,26 @@ import pricesRouter from "./routes/prices";
 import basketRouter from "./routes/basket";
 import appQueryRouter from "./routes/appQuery";
 import medicalRouter from "./routes/medical";
+import storesRouter from "./routes/stores";
+import householdRouter from "./routes/household";
 import { validateCloudReceiptApi } from "./services/aiService";
 
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "15mb" }));
 
 app.get("/health", (_req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-/** Check if the cloud receipt fallback API (Gemini) is configured and reachable. Use ?validate=1 to ping Gemini. */
+/** Cloud AI status (cloud providers removed; on-device-first). */
 app.get("/health/cloud", async (req, res) => {
   const validate = req.query.validate === "1" || req.query.validate === "true";
-  const hasKey = Boolean(process.env.GEMINI_API_KEY?.trim());
   if (!validate) {
     res.status(200).json({
-      cloudReceiptApi: hasKey ? "configured" : "missing",
-      message: hasKey ? undefined : "GEMINI_API_KEY is not set. Set it in .env to enable receipt cloud fallback.",
+      cloudReceiptApi: "disabled",
+      message: "Cloud AI is disabled (on-device-only mode).",
     });
     return;
   }
@@ -65,6 +66,8 @@ app.use("/api/prices", requireAuth, pricesRouter);
 app.use("/api/basket", requireAuth, basketRouter);
 app.use("/api/app-query", requireAuth, appQueryRouter);
 app.use("/api/medical", requireAuth, medicalRouter);
+app.use("/api/stores", requireAuth, storesRouter);
+app.use("/api/household", requireAuth, householdRouter);
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const msg = err.message ?? "Internal server error";

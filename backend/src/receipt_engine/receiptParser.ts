@@ -5,15 +5,34 @@
  */
 
 import { NormalizedReceipt } from "./receiptNormalizer";
+import { extractReceiptDateFromText } from "./dateParser";
 
 export interface ParsedReceiptMeta {
   storeName: string;
+  /** First line that looks like a street address (optional). */
+  storeAddress?: string | null;
   subtotal: number;
   tax: number;
   total: number;
   date?: string;
   /** How we chose the total – for "needs review" when low. */
   totalConfidence?: "high" | "low" | "fallback";
+}
+
+/** Heuristic: line has street number + words, not a price line. Used for Basket store address. */
+function extractStoreAddress(normalized: NormalizedReceipt, storeName: string): string | null {
+  const storeLower = storeName.toLowerCase().trim();
+  for (const line of normalized.lines) {
+    const t = line.trim();
+    if (t.length < 10 || t.length > 120) continue;
+    if (t.toLowerCase() === storeLower) continue;
+    if (/\d+\.\d{2}\s*$/.test(t)) continue;
+    if (/^(total|subtotal|tax|amount|balance|card|cash)\b/i.test(t)) continue;
+    if (/\d{1,5}\s+[\w\s]+(?:st|street|ave|avenu|road|rd|blvd|drive|dr|lane|ln|way|court|ct)/i.test(t) || (/^\d+\s/.test(t) && (t.match(/\s/g)?.length ?? 0) >= 2)) {
+      return t;
+    }
+  }
+  return null;
 }
 
 /** Patterns for total (e.g. "total 12.99", "amount due 12.99"). Order: most specific first. */
@@ -48,10 +67,7 @@ const STORE_KEYWORDS = [
   "royal bank", "rbc", "td bank", "scotiabank", "bmo", "cibc",
 ];
 
-const DATE_PATTERNS = [
-  /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/,
-  /\b(\d{1,2})-(\d{1,2})-(\d{2,4})\b/,
-];
+// Date parsing moved to dateParser.ts (multi-format + validation).
 
 /** Normalize OCR amount: 899 → 8.99, 350 → 3.50 when raw looks like cents (no decimal). */
 function normalizeAmount(value: number, rawMatch: string): number {
@@ -142,20 +158,7 @@ function extractStoreName(normalized: NormalizedReceipt): string {
 }
 
 function extractDate(raw: string): string | undefined {
-  for (const re of DATE_PATTERNS) {
-    const m = raw.match(re);
-    if (m) {
-      const month = m[1].padStart(2, "0");
-      const day = m[2].padStart(2, "0");
-      let year = m[3];
-      if (year.length === 2) {
-        const y = parseInt(year, 10);
-        year = y >= 0 && y <= 50 ? `20${year}` : `19${year}`;
-      }
-      return `${year}-${month}-${day}`;
-    }
-  }
-  return undefined;
+  return extractReceiptDateFromText(raw);
 }
 
 /**
@@ -187,11 +190,13 @@ export function parseReceiptMeta(normalized: NormalizedReceipt): ParsedReceiptMe
   const tax = extractFirstMatch(raw, TAX_PATTERNS)
     ?? (total > 0 && subtotal > 0 ? Math.round((total - subtotal) * 100) / 100 : 0);
   const storeName = extractStoreName(normalized);
+  const storeAddress = extractStoreAddress(normalized, storeName);
   const date = extractDate(raw);
 
   const safe = (n: number) => (typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0);
   return {
     storeName,
+    storeAddress: storeAddress ?? undefined,
     subtotal: safe(subtotal >= 0 ? subtotal : total),
     tax: safe(tax),
     total: safe(total),

@@ -7,8 +7,24 @@ import { getLastReceiptDebug, setLastReceiptDebug } from "../receipt_engine";
 import { runHybridPipeline } from "../receipt_engine/hybridPipeline";
 import { shareReceiptToGroup } from "../services/receiptShareService";
 import { syncReceiptToPriceRecords } from "../services/priceRecordService";
+import { ALL_CATEGORY_NAMES } from "../config/categories";
+import { saveUserRule, type CategoryName } from "../receipt_engine/aiCategorizer";
+import { parseReceiptDate } from "../receipt_engine/dateParser";
+import { ReceiptVisibility } from "@prisma/client";
 
 const router = Router();
+
+const ALLOWED_CATEGORIES_SET = new Set(ALL_CATEGORY_NAMES);
+
+/** Normalize and validate receipt date (multi-format); return valid Date or today. */
+function toValidReceiptDate(dateStr: string | undefined): Date {
+  const normalized = parseReceiptDate((dateStr ?? "").trim()) ?? dateStr?.trim();
+  if (normalized) {
+    const d = new Date(normalized);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  return new Date();
+}
 
 /** Log parsed summary to server console and set last receipt debug for GET /receipts/debug. */
 function logAndSetReceiptDebug(parsed: {
@@ -57,13 +73,47 @@ router.get("/debug", async (req: AuthRequest, res: Response) => {
   }
 });
 
-/** Fire-and-forget: sync receipt items to PriceRecord table. Group receipts → GROUP; else PRIVATE. Future: reviewBeforeSync / excludedCategories can gate or filter here. */
+function getShareMode(receipt: { groupId?: string | null }, user: { isCommunityOptIn?: boolean }): "GROUP" | "COMMUNITY" | "PRIVATE" {
+  if (receipt.groupId) return "GROUP";
+  return user.isCommunityOptIn ? "COMMUNITY" : "PRIVATE";
+}
+
+function getLatLngFromBody(body: unknown): { lat?: number; lng?: number } {
+  if (!body || typeof body !== "object") return {};
+  const b = body as Record<string, unknown>;
+  const lat = b.lat != null ? Number(b.lat) : undefined;
+  const lng = b.lng != null ? Number(b.lng) : undefined;
+  return { lat: Number.isFinite(lat) ? lat : undefined, lng: Number.isFinite(lng) ? lng : undefined };
+}
+
+async function getReceiptVisibilityForCreate(
+  userId: string,
+  body: unknown
+): Promise<{ visibilityType: ReceiptVisibility; householdId: string | null }> {
+  if (!body || typeof body !== "object") return { visibilityType: ReceiptVisibility.PERSONAL, householdId: null };
+  const b = body as Record<string, unknown>;
+  const visibilityRaw = typeof b.visibilityType === "string" ? b.visibilityType.trim().toLowerCase() : "";
+  const householdId = typeof b.householdId === "string" ? b.householdId.trim() : "";
+
+  if (visibilityRaw !== "household") return { visibilityType: ReceiptVisibility.PERSONAL, householdId: null };
+  if (!householdId) return { visibilityType: ReceiptVisibility.PERSONAL, householdId: null };
+
+  const membership = await prisma.householdMember.findFirst({
+    where: { userId, householdId, status: "active" },
+  });
+  if (!membership) throw new Error("Not a member of this household");
+  return { visibilityType: ReceiptVisibility.HOUSEHOLD, householdId };
+}
+
+/** Fire-and-forget: sync receipt items to PriceRecord table. Use COMMUNITY when user opted in (and not group); pass lat/lng for 30km filter. */
 function triggerPriceRecordSync(
   receiptId: string,
-  shareMode: "NONE" | "PRIVATE" | "GROUP" | "COMMUNITY" = "NONE",
-  cityOrArea: string = "Unknown"
+  shareMode: "NONE" | "PRIVATE" | "GROUP" | "COMMUNITY",
+  cityOrArea: string = "Unknown",
+  lat?: number | null,
+  lng?: number | null
 ): void {
-  syncReceiptToPriceRecords(receiptId, shareMode, cityOrArea).catch((err) =>
+  syncReceiptToPriceRecords(receiptId, shareMode, cityOrArea, lat, lng).catch((err) =>
     console.error("PriceRecord sync failed for receipt", receiptId, err)
   );
 }
@@ -100,9 +150,70 @@ router.get("/", async (req: AuthRequest, res: Response) => {
         return false;
       });
     }
-    res.json(receipts);
+    const baseUrl = `${req.protocol}://${req.get("host") ?? ""}`.replace(/\/$/, "");
+    const payload = receipts.map((r) => {
+      const rec = r as { imageDataBase64?: string | null; imageUrl?: string | null; [k: string]: unknown };
+      const hasStoredImage = typeof rec.imageDataBase64 === "string" && rec.imageDataBase64.length > 0;
+      const { imageDataBase64: _omit, ...rest } = rec;
+      return {
+        ...rest,
+        imageUrl: hasStoredImage ? `${baseUrl}/api/receipts/${r.id}/image` : (r.imageUrl ?? null),
+      };
+    });
+    res.json(payload);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to fetch receipts";
+    res.status(500).json({ error: message });
+  }
+});
+
+/** Serve stored receipt image so Library can display it (client file:// URLs are often invalid after upload). */
+router.get("/:id/image", async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.auth) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const user = await prisma.user.findUnique({
+      where: { firebaseId: req.auth.uid },
+    });
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    let receipt = await prisma.receipt.findFirst({
+      where: { id, userId: user.id },
+      select: { imageDataBase64: true },
+    });
+    if (!receipt) {
+      const householdReceipt = await prisma.receipt.findFirst({
+        where: { id },
+        select: { imageDataBase64: true, householdId: true },
+      });
+      if (householdReceipt?.householdId && householdReceipt.imageDataBase64) {
+        const member = await prisma.householdMember.findFirst({
+          where: { userId: user.id, householdId: householdReceipt.householdId, status: "active" },
+        });
+        if (member) receipt = { imageDataBase64: householdReceipt.imageDataBase64 };
+      }
+    }
+    if (!receipt?.imageDataBase64) {
+      res.status(404).json({ error: "No image" });
+      return;
+    }
+    const wantsJson = req.headers.accept?.includes("application/json");
+    if (wantsJson) {
+      res.setHeader("Content-Type", "application/json");
+      res.json({ image: receipt.imageDataBase64 });
+      return;
+    }
+    const buf = Buffer.from(receipt.imageDataBase64, "base64");
+    res.setHeader("Content-Type", "image/jpeg");
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.send(buf);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to load image";
     res.status(500).json({ error: message });
   }
 });
@@ -131,7 +242,6 @@ router.post("/", upload.single("image"), async (req: AuthRequest, res: Response)
     }
 
     const base64 = file.buffer.toString("base64");
-    const imageUrl = typeof req.body?.imageUrl === "string" ? req.body.imageUrl : null;
 
     const user = await prisma.user.findUnique({
       where: { firebaseId: req.auth.uid },
@@ -140,6 +250,8 @@ router.post("/", upload.single("image"), async (req: AuthRequest, res: Response)
       res.status(404).json({ error: "User not found" });
       return;
     }
+
+    const { visibilityType, householdId } = await getReceiptVisibilityForCreate(user.id, req.body);
 
     let parsed: Awaited<ReturnType<typeof parseReceiptImage>>;
     try {
@@ -159,12 +271,15 @@ router.post("/", upload.single("image"), async (req: AuthRequest, res: Response)
       const receipt = await prisma.receipt.create({
         data: {
           userId: user.id,
+          uploadedByUserId: user.id,
+          householdId,
+          visibilityType,
           storeId: store.id,
           date: new Date(),
           subtotal: 0,
           tax: 0,
           total: 0,
-          imageUrl,
+          imageDataBase64: base64,
           status: "NEEDS_REVIEW",
         },
       });
@@ -182,7 +297,8 @@ router.post("/", upload.single("image"), async (req: AuthRequest, res: Response)
           },
         ],
       });
-      triggerPriceRecordSync(receipt.id, receipt.groupId ? "GROUP" : "PRIVATE", "Unknown");
+      const { lat: lat1, lng: lng1 } = getLatLngFromBody(req.body);
+      triggerPriceRecordSync(receipt.id, getShareMode(receipt, user), "Unknown", lat1, lng1);
       const receiptWithItems = await prisma.receipt.findUnique({
         where: { id: receipt.id },
         include: { store: true, items: true },
@@ -191,11 +307,7 @@ router.post("/", upload.single("image"), async (req: AuthRequest, res: Response)
       return;
     }
 
-    const receiptDate = new Date(parsed.date);
-    if (isNaN(receiptDate.getTime())) {
-      res.status(400).json({ error: "Invalid receipt date from AI" });
-      return;
-    }
+    const receiptDate = toValidReceiptDate(parsed.date);
 
     logAndSetReceiptDebug(parsed, "cloud");
 
@@ -216,12 +328,15 @@ router.post("/", upload.single("image"), async (req: AuthRequest, res: Response)
     const receipt = await prisma.receipt.create({
       data: {
         userId: user.id,
+        uploadedByUserId: user.id,
+        householdId,
+        visibilityType,
         storeId: store.id,
         date: receiptDate,
         subtotal: Number(parsed.subtotal),
         tax: Number(parsed.tax),
         total: Number(parsed.total),
-        imageUrl,
+        imageDataBase64: base64,
         status: "VERIFIED",
         extractionSource: "cloud",
       },
@@ -237,9 +352,11 @@ router.post("/", upload.single("image"), async (req: AuthRequest, res: Response)
         unitPrice: Number(it.unitPrice),
         totalPrice: Number(it.totalPrice),
         category: it.category ?? "Other",
+        subcategory: (it as { subcategory?: string }).subcategory ?? null,
       })),
     });
-    triggerPriceRecordSync(receipt.id, receipt.groupId ? "GROUP" : "PRIVATE", "Unknown");
+    const { lat: latPost, lng: lngPost } = getLatLngFromBody(req.body);
+    triggerPriceRecordSync(receipt.id, getShareMode(receipt, user), "Unknown", latPost, lngPost);
 
     const receiptWithItems = await prisma.receipt.findUnique({
       where: { id: receipt.id },
@@ -254,14 +371,23 @@ router.post("/", upload.single("image"), async (req: AuthRequest, res: Response)
   }
 });
 
-/** Native Intelligence: fully processed on-device; no image, no Cloud AI. */
+/** Native Intelligence: fully processed on-device; optional image stored for Library display. */
 router.post("/from-local", async (req: AuthRequest, res: Response) => {
   try {
     if (!req.auth) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
-    const body = req.body as { storeName?: string; total?: number; date?: string; category?: string };
+    const body = req.body as {
+      storeName?: string;
+      total?: number;
+      date?: string;
+      category?: string;
+      visibilityType?: string;
+      householdId?: string;
+      image?: string;
+      storeAddress?: string;
+    };
     const storeName = typeof body.storeName === "string" ? body.storeName.trim() : "";
     const total = typeof body.total === "number" ? body.total : 0;
     if (!storeName || total <= 0) {
@@ -275,26 +401,35 @@ router.post("/from-local", async (req: AuthRequest, res: Response) => {
       res.status(404).json({ error: "User not found" });
       return;
     }
+
+    const { visibilityType, householdId } = await getReceiptVisibilityForCreate(user.id, body);
     const dateStr = typeof body.date === "string" ? body.date.trim() : new Date().toISOString().slice(0, 10);
     const receiptDate = new Date(dateStr);
     const date = isNaN(receiptDate.getTime()) ? new Date() : receiptDate;
     const category = typeof body.category === "string" && body.category.trim()
       ? body.category.trim()
       : "Other";
+    const rawImage = typeof body.image === "string" ? body.image.trim() : "";
+    const imageBase64 = rawImage.length > 100 ? rawImage : null;
+    const storeAddress = typeof body.storeAddress === "string" && body.storeAddress.trim().length > 0 ? body.storeAddress.trim() : null;
     const store = await prisma.store.upsert({
       where: { userId_name: { userId: user.id, name: storeName } },
-      create: { userId: user.id, name: storeName },
-      update: {},
+      create: { userId: user.id, name: storeName, address: storeAddress ?? undefined },
+      update: storeAddress !== null ? { address: storeAddress } : {},
     });
     const receipt = await prisma.receipt.create({
       data: {
         userId: user.id,
+        uploadedByUserId: user.id,
+        householdId,
+        visibilityType,
         storeId: store.id,
         date,
         subtotal: total,
         tax: 0,
         total,
-        status: "NEEDS_REVIEW",
+        imageDataBase64: imageBase64,
+        status: "VERIFIED",
         extractionSource: "local",
       },
     });
@@ -312,7 +447,8 @@ router.post("/from-local", async (req: AuthRequest, res: Response) => {
         },
       ],
     });
-    triggerPriceRecordSync(receipt.id, receipt.groupId ? "GROUP" : "PRIVATE", "Unknown");
+    const { lat: latLocal, lng: lngLocal } = getLatLngFromBody(req.body);
+    triggerPriceRecordSync(receipt.id, getShareMode(receipt, user), "Unknown", latLocal, lngLocal);
     const receiptWithItems = await prisma.receipt.findUnique({
       where: { id: receipt.id },
       include: { store: true, items: true },
@@ -335,14 +471,15 @@ router.post("/process-text", async (req: AuthRequest, res: Response) => {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
-    const body = req.body as { rawText?: string; image?: string };
+    const body = req.body as { rawText?: string; image?: string; visibilityType?: string; householdId?: string };
     let rawText = typeof body.rawText === "string" ? body.rawText : "";
     rawText = rawText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
     if (!rawText) {
       res.status(400).json({ error: "process-text requires rawText (OCR output)" });
       return;
     }
-    const base64Image = typeof body.image === "string" && body.image.trim().length > 0 ? body.image.trim() : null;
+    const rawImage = typeof body.image === "string" ? body.image.trim() : "";
+    const base64Image = rawImage.length > 100 ? rawImage : null;
     const user = await prisma.user.findUnique({
       where: { firebaseId: req.auth.uid },
     });
@@ -350,6 +487,8 @@ router.post("/process-text", async (req: AuthRequest, res: Response) => {
       res.status(404).json({ error: "User not found" });
       return;
     }
+
+    const { visibilityType, householdId } = await getReceiptVisibilityForCreate(user.id, body);
 
     const lineCount = rawText.split(/\n/).filter((l) => l.trim().length > 0).length;
     const charCount = rawText.length;
@@ -362,8 +501,7 @@ router.post("/process-text", async (req: AuthRequest, res: Response) => {
       }
       const parsed = await parseReceiptImage(base64Image);
       logAndSetReceiptDebug(parsed, "process-text-short");
-      const receiptDate = new Date(parsed.date);
-      const date = isNaN(receiptDate.getTime()) ? new Date() : receiptDate;
+      const date = toValidReceiptDate(parsed.date);
       const store = await prisma.store.upsert({
         where: { userId_name: { userId: user.id, name: parsed.storeName.trim() } },
         create: { userId: user.id, name: parsed.storeName.trim(), address: parsed.storeAddress ?? undefined },
@@ -372,11 +510,15 @@ router.post("/process-text", async (req: AuthRequest, res: Response) => {
       const receipt = await prisma.receipt.create({
         data: {
           userId: user.id,
+          uploadedByUserId: user.id,
+          householdId,
+          visibilityType,
           storeId: store.id,
           date,
           subtotal: Number(parsed.subtotal),
           tax: Number(parsed.tax),
           total: Number(parsed.total),
+          imageDataBase64: base64Image,
           status: "VERIFIED",
           extractionSource: "cloud",
           pipelineDebug: {
@@ -397,9 +539,11 @@ router.post("/process-text", async (req: AuthRequest, res: Response) => {
           unitPrice: Number(it.unitPrice),
           totalPrice: Number(it.totalPrice),
           category: it.category ?? "Other",
+          subcategory: (it as { subcategory?: string }).subcategory ?? null,
         })),
       });
-      triggerPriceRecordSync(receipt.id, receipt.groupId ? "GROUP" : "PRIVATE", "Unknown");
+      const { lat: latShort, lng: lngShort } = getLatLngFromBody(req.body);
+      triggerPriceRecordSync(receipt.id, getShareMode(receipt, user), "Unknown", latShort, lngShort);
       const receiptWithItems = await prisma.receipt.findUnique({
         where: { id: receipt.id },
         include: { store: true, items: true },
@@ -413,30 +557,35 @@ router.post("/process-text", async (req: AuthRequest, res: Response) => {
     }
 
     const { result, pipelineDebug } = await runHybridPipeline(rawText, base64Image);
-    const receiptDate = new Date(result.purchaseDate);
-    const date = isNaN(receiptDate.getTime()) ? new Date() : receiptDate;
+    const date = toValidReceiptDate(result.purchaseDate);
     const receiptStatus = result.reviewStatus === "verified" ? "VERIFIED" : "NEEDS_REVIEW";
     const safeNum = (n: number) => (typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0);
     const subtotal = safeNum(result.subtotal);
     const tax = safeNum(result.tax);
     const total = safeNum(result.total);
 
+    const merchantAddress = (result as { merchantAddress?: string | null }).merchantAddress;
+    const storeAddressStr = typeof merchantAddress === "string" && merchantAddress.trim().length > 0 ? merchantAddress.trim() : null;
     const store = await prisma.store.upsert({
       where: {
         userId_name: { userId: user.id, name: result.merchantName },
       },
-      create: { userId: user.id, name: result.merchantName },
-      update: {},
+      create: { userId: user.id, name: result.merchantName, address: storeAddressStr ?? undefined },
+      update: storeAddressStr !== null ? { address: storeAddressStr } : {},
     });
 
     const receipt = await prisma.receipt.create({
       data: {
         userId: user.id,
+        uploadedByUserId: user.id,
+        householdId,
+        visibilityType,
         storeId: store.id,
         date,
         subtotal,
         tax,
         total,
+        imageDataBase64: base64Image ?? null,
         status: receiptStatus,
         extractionSource: result.extractionSource,
         pipelineDebug: pipelineDebug as object,
@@ -453,6 +602,7 @@ router.post("/process-text", async (req: AuthRequest, res: Response) => {
           unitPrice: safeNum(it.unitPrice),
           totalPrice: safeNum(it.totalPrice),
           category: (it.category ?? "Other").trim() || "Other",
+          subcategory: it.subcategory ?? null,
         }))
       : [
           {
@@ -468,7 +618,8 @@ router.post("/process-text", async (req: AuthRequest, res: Response) => {
         ];
 
     await prisma.item.createMany({ data: itemsToCreate });
-    triggerPriceRecordSync(receipt.id, receipt.groupId ? "GROUP" : "PRIVATE", "Unknown");
+    const { lat: latPt, lng: lngPt } = getLatLngFromBody(req.body);
+    triggerPriceRecordSync(receipt.id, getShareMode(receipt, user), "Unknown", latPt, lngPt);
 
     const receiptWithItems = await prisma.receipt.findUnique({
       where: { id: receipt.id },
@@ -510,16 +661,17 @@ router.post("/from-base64", async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const { image: base64, imageUrl: bodyImageUrl, localExtract: bodyLocalExtract } = req.body as {
+    const { image: base64, imageUrl: bodyImageUrl, localExtract: bodyLocalExtract, visibilityType: bodyVis, householdId: bodyHouseholdId } = req.body as {
       image?: string;
       imageUrl?: string;
+      visibilityType?: string;
+      householdId?: string;
       localExtract?: { storeName?: string; total?: number; date?: string };
     };
     if (!base64 || typeof base64 !== "string") {
       res.status(400).json({ error: "Missing or invalid 'image' base64 string in body." });
       return;
     }
-    const imageUrl = typeof bodyImageUrl === "string" ? bodyImageUrl : null;
     const localExtract =
       bodyLocalExtract &&
       typeof bodyLocalExtract.storeName === "string" &&
@@ -539,6 +691,11 @@ router.post("/from-base64", async (req: AuthRequest, res: Response) => {
       res.status(404).json({ error: "User not found" });
       return;
     }
+
+    const { visibilityType, householdId } = await getReceiptVisibilityForCreate(user.id, {
+      visibilityType: bodyVis,
+      householdId: bodyHouseholdId,
+    });
 
     let parsed: Awaited<ReturnType<typeof parseReceiptImage>>;
     try {
@@ -570,12 +727,15 @@ router.post("/from-base64", async (req: AuthRequest, res: Response) => {
       const receipt = await prisma.receipt.create({
         data: {
           userId: user.id,
+          uploadedByUserId: user.id,
+          householdId,
+          visibilityType,
           storeId: store.id,
           date: new Date(),
           subtotal: 0,
           tax: 0,
           total: 0,
-          imageUrl,
+          imageDataBase64: base64.length > 0 ? base64 : null,
           status: "NEEDS_REVIEW",
           extractionSource: "cloud",
         },
@@ -594,7 +754,8 @@ router.post("/from-base64", async (req: AuthRequest, res: Response) => {
           },
         ],
       });
-      triggerPriceRecordSync(receipt.id, receipt.groupId ? "GROUP" : "PRIVATE", "Unknown");
+      const { lat: latNeeds, lng: lngNeeds } = getLatLngFromBody(req.body);
+      triggerPriceRecordSync(receipt.id, getShareMode(receipt, user), "Unknown", latNeeds, lngNeeds);
       const receiptWithItems = await prisma.receipt.findUnique({
         where: { id: receipt.id },
         include: { store: true, items: true },
@@ -605,11 +766,7 @@ router.post("/from-base64", async (req: AuthRequest, res: Response) => {
 
     logAndSetReceiptDebug(parsed, "from-base64");
 
-    const receiptDate = new Date(parsed.date);
-    if (isNaN(receiptDate.getTime())) {
-      res.status(400).json({ error: "Invalid receipt date from AI" });
-      return;
-    }
+    const receiptDate = toValidReceiptDate(parsed.date);
 
     const store = await prisma.store.upsert({
       where: {
@@ -628,12 +785,15 @@ router.post("/from-base64", async (req: AuthRequest, res: Response) => {
     const receipt = await prisma.receipt.create({
       data: {
         userId: user.id,
+        uploadedByUserId: user.id,
+        householdId,
+        visibilityType,
         storeId: store.id,
         date: receiptDate,
         subtotal: Number(parsed.subtotal),
         tax: Number(parsed.tax),
         total: Number(parsed.total),
-        imageUrl,
+        imageDataBase64: base64.length > 0 ? base64 : null,
         status: "VERIFIED",
         extractionSource: localExtract ? "local" : "cloud",
       },
@@ -649,9 +809,11 @@ router.post("/from-base64", async (req: AuthRequest, res: Response) => {
         unitPrice: Number(it.unitPrice),
         totalPrice: Number(it.totalPrice),
         category: it.category ?? "Other",
+        subcategory: (it as { subcategory?: string }).subcategory ?? null,
       })),
     });
-    triggerPriceRecordSync(receipt.id, receipt.groupId ? "GROUP" : "PRIVATE", "Unknown");
+    const { lat: latB64, lng: lngB64 } = getLatLngFromBody(req.body);
+    triggerPriceRecordSync(receipt.id, getShareMode(receipt, user), "Unknown", latB64, lngB64);
 
     const receiptWithItems = await prisma.receipt.findUnique({
       where: { id: receipt.id },
@@ -691,6 +853,9 @@ router.post("/:id/share-to-group", async (req: AuthRequest, res: Response) => {
     }
 
     const result = await shareReceiptToGroup(receiptId, groupId, user.id, participantIds);
+    if (user.isCommunityOptIn) {
+      triggerPriceRecordSync(receiptId, "COMMUNITY", "Unknown");
+    }
     res.status(200).json({
       success: true,
       expenseId: result.expenseId,
@@ -758,6 +923,177 @@ router.patch("/:id/group", async (req: AuthRequest, res: Response) => {
   }
 });
 
+/** Keywords that suggest an item is prescription/drug (for "Add to medical" suggestions). */
+const RX_ITEM_PATTERNS = [
+  /\b(?:rx|prescription|medication|medicine|drug|tablet|tablets|capsule|capsules|mg\b|ml\b|pharmacy|antibiotic|insulin|metformin|amlodipine|lisinopril|atorvastatin|omeprazole|levothyroxine|amlodipine|gabapentin|hydrochlorothiazide|losartan|sertraline|escitalopram|tramadol|prednisone|albuterol|fluticasone|advair|symbicort|creon|synthroid)\b/i,
+  /\b\d+\s*mg\b/i,
+  /\b\d+\s*(?:tablet|cap|pill)s?\b/i,
+];
+
+function looksLikeRxItem(name: string): boolean {
+  const n = (name ?? "").trim().toLowerCase();
+  if (n.length < 2) return false;
+  return RX_ITEM_PATTERNS.some((re) => re.test(n));
+}
+
+/** GET /:id/medical-suggestions — suggest which receipt items look like Rx/drugs (for "Add to medical" flow). */
+router.get("/:id/medical-suggestions", async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.auth) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const user = await prisma.user.findUnique({
+      where: { firebaseId: req.auth.uid },
+    });
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+    const receiptId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const receipt = await prisma.receipt.findFirst({
+      where: { id: receiptId, userId: user.id },
+      include: { store: true, items: true },
+    });
+    if (!receipt) {
+      res.status(404).json({ error: "Receipt not found" });
+      return;
+    }
+    const rxItemIds = receipt.items
+      .filter((it) => looksLikeRxItem(it.name ?? it.rawName ?? ""))
+      .map((it) => it.id);
+    const storeName = receipt.store?.name ?? null;
+    const isPharmacyLike = /pharmacy|drug|walgreens|cvs|rite.?aid|health|medical/i.test(storeName ?? "");
+    res.json({
+      receiptId: receipt.id,
+      storeName,
+      isPharmacyLike,
+      rxItemIds,
+      allItemIds: receipt.items.map((it) => it.id),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to get suggestions";
+    res.status(500).json({ error: message });
+  }
+});
+
+/** POST /:id/add-to-medical — create medical expenses from selected receipt items and attach to a folder (patient). */
+router.post("/:id/add-to-medical", async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.auth) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const user = await prisma.user.findUnique({
+      where: { firebaseId: req.auth.uid },
+    });
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+    const receiptId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const folderId = typeof req.body?.folderId === "string" ? req.body.folderId.trim() : "";
+    const itemIds = Array.isArray(req.body?.itemIds)
+      ? (req.body.itemIds as unknown[]).filter((id): id is string => typeof id === "string" && id.trim() !== "")
+      : [];
+    if (!folderId) {
+      res.status(400).json({ error: "folderId is required" });
+      return;
+    }
+    const folder = await prisma.medicalFolder.findFirst({
+      where: { id: folderId, userId: user.id },
+    });
+    if (!folder) {
+      res.status(404).json({ error: "Medical folder not found" });
+      return;
+    }
+    const receipt = await prisma.receipt.findFirst({
+      where: { id: receiptId, userId: user.id },
+      include: { store: true, items: true },
+    });
+    if (!receipt) {
+      res.status(404).json({ error: "Receipt not found" });
+      return;
+    }
+    const storeName = receipt.store?.name ?? null;
+    const receiptDate = receipt.date;
+    const itemIdsSet = new Set(itemIds);
+    const itemsToAdd = itemIds.length > 0
+      ? receipt.items.filter((it) => itemIdsSet.has(it.id))
+      : receipt.items;
+    if (itemsToAdd.length === 0) {
+      res.status(400).json({ error: "No items to add. Select at least one item or send empty itemIds to add all." });
+      return;
+    }
+    const created = await prisma.medicalExpense.createMany({
+      data: itemsToAdd.map((it) => ({
+        folderId,
+        itemName: it.name ?? it.rawName ?? "Item",
+        price: Number(it.totalPrice) || 0,
+        date: receiptDate,
+        storeName: storeName ?? undefined,
+      })),
+    });
+    res.status(201).json({
+      success: true,
+      folderId,
+      patientName: folder.patientName,
+      addedCount: created.count,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to add to medical";
+    res.status(500).json({ error: message });
+  }
+});
+
+/** PATCH /:id — update receipt date (e.g. when store format was wrong). */
+router.patch("/:id", async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.auth) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const user = await prisma.user.findUnique({
+      where: { firebaseId: req.auth.uid },
+    });
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+    const receiptId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    if (!receiptId) {
+      res.status(400).json({ error: "Receipt ID required" });
+      return;
+    }
+    const body = (req.body ?? {}) as { date?: string };
+    const dateStr = typeof body.date === "string" ? body.date.trim() : undefined;
+    if (!dateStr) {
+      res.status(400).json({ error: "Provide date (YYYY-MM-DD) to update" });
+      return;
+    }
+    const receipt = await prisma.receipt.findFirst({
+      where: { id: receiptId, userId: user.id },
+    });
+    if (!receipt) {
+      res.status(404).json({ error: "Receipt not found" });
+      return;
+    }
+    const date = toValidReceiptDate(dateStr);
+    await prisma.receipt.update({
+      where: { id: receiptId },
+      data: { date },
+    });
+    const updated = await prisma.receipt.findUnique({
+      where: { id: receiptId },
+      include: { store: true, items: true },
+    });
+    res.status(200).json(updated);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Update receipt failed";
+    res.status(500).json({ error: message });
+  }
+});
+
 /** Mark a receipt as verified (expedite pending review). Only for receipts that are NEEDS_REVIEW and belong to the user. */
 router.patch("/:id/approve", async (req: AuthRequest, res: Response) => {
   try {
@@ -801,6 +1137,72 @@ router.patch("/:id/approve", async (req: AuthRequest, res: Response) => {
     res.status(200).json(updated);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Approve failed";
+    res.status(500).json({ error: message });
+  }
+});
+
+/** Update a receipt line item (e.g. category for item-level mapping). Optionally saves to user rules for future receipts. */
+router.patch("/:id/items/:itemId", async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.auth) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const user = await prisma.user.findUnique({
+      where: { firebaseId: req.auth.uid },
+    });
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+    const receiptId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const itemId = Array.isArray(req.params.itemId) ? req.params.itemId[0] : req.params.itemId;
+    if (!receiptId || !itemId) {
+      res.status(400).json({ error: "Receipt ID and Item ID required" });
+      return;
+    }
+    const body = (req.body || {}) as { category?: string; subcategory?: string; name?: string; rawName?: string };
+    const category =
+      typeof body.category === "string" && body.category.trim()
+        ? (ALLOWED_CATEGORIES_SET.has(body.category.trim() as CategoryName) ? body.category.trim() : "Other")
+        : undefined;
+    const subcategory = typeof body.subcategory === "string" ? body.subcategory.trim() || null : undefined;
+    const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : undefined;
+    const rawName = typeof body.rawName === "string" ? body.rawName.trim() : undefined;
+    if (category === undefined && subcategory === undefined && name === undefined && rawName === undefined) {
+      res.status(400).json({ error: "Provide at least one of category, subcategory, name, or rawName" });
+      return;
+    }
+
+    const item = await prisma.item.findFirst({
+      where: { id: itemId, receiptId },
+      include: { receipt: true },
+    });
+    if (!item || item.receipt.userId !== user.id) {
+      res.status(404).json({ error: "Item not found" });
+      return;
+    }
+
+    const data: { category?: string; subcategory?: string | null; name?: string; rawName?: string } = {};
+    if (category !== undefined) data.category = category;
+    if (subcategory !== undefined) data.subcategory = subcategory;
+    if (name !== undefined) data.name = name;
+    if (rawName !== undefined) data.rawName = rawName;
+
+    const updated = await prisma.item.update({
+      where: { id: itemId },
+      data,
+    });
+    if (category !== undefined) {
+      try {
+        saveUserRule(item.rawName || item.name, category as CategoryName);
+      } catch {
+        // ignore file write failure
+      }
+    }
+    res.status(200).json(updated);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Update item failed";
     res.status(500).json({ error: message });
   }
 });

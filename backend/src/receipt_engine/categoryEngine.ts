@@ -40,13 +40,61 @@ function getItemDictionary(): Record<string, string> {
   return itemDictionaryCache;
 }
 
+let householdEssentialsCache: { categories: Array<{ name: string; subcategories: Array<{ name: string; items: string[] }> }> } | null = null;
+
+function getHouseholdEssentials(): { categories: Array<{ name: string; subcategories: Array<{ name: string; items: string[] }> }> } {
+  if (householdEssentialsCache === null) {
+    try {
+      const raw = loadJson<{ categories?: Array<{ name: string; subcategories?: Array<{ name: string; items?: string[] }> }> }>("household_essentials.json");
+      householdEssentialsCache = {
+        categories: Array.isArray(raw.categories)
+          ? raw.categories.map((c) => ({
+              name: String(c.name),
+              subcategories: Array.isArray(c.subcategories)
+                ? c.subcategories.map((sc) => ({
+                    name: String(sc.name),
+                    items: Array.isArray(sc.items) ? sc.items.map(String) : [],
+                  }))
+                : [],
+            }))
+          : [],
+      };
+    } catch {
+      householdEssentialsCache = { categories: [] };
+    }
+  }
+  return householdEssentialsCache;
+}
+
+/** Resolve subcategory from household_essentials tree for item-level tracking. Returns subcategory name or null. */
+export function getSubcategoryForItem(itemName: string, category: string): string | null {
+  const key = itemName.trim().toLowerCase();
+  if (!key) return null;
+  const he = getHouseholdEssentials();
+  const cat = he.categories.find((c) => c.name.trim().toLowerCase() === category.trim().toLowerCase());
+  if (!cat) return null;
+  for (const sc of cat.subcategories) {
+    const matched = sc.items.some(
+      (item) =>
+        item.trim().toLowerCase() === key ||
+        key.includes(item.trim().toLowerCase()) ||
+        item.trim().toLowerCase().includes(key)
+    );
+    if (matched) return sc.name;
+  }
+  return null;
+}
+
 /** Invalidate caches (e.g. after saving a new user rule). */
 export function invalidateCategoryCaches(): void {
   userRulesCache = null;
+  itemDictionaryCache = null;
+  householdEssentialsCache = null;
 }
 
 const ALLOWED_SET = new Set<string>([
-  "Groceries", "Household", "Personal Care", "Health", "Electronics", "Dining", "Gas", "Other",
+  "Groceries", "Household", "Personal Care", "Health", "Baby", "Pet", "Electronics", "Dining", "Gas",
+  "Transportation", "Banking", "Clothing", "Subscriptions", "Entertainment", "Education", "Gifts & Donations", "Other",
 ]);
 
 function normalizeCategory(c: string): CategoryName {

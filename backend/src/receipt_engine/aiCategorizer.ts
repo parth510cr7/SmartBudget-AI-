@@ -6,18 +6,25 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "");
+// Cloud AI removed (on-device-first). Kept for compatibility.
 
 export const ALLOWED_CATEGORIES = [
   "Groceries",
   "Household",
   "Personal Care",
   "Health",
+  "Baby",
+  "Pet",
   "Electronics",
   "Dining",
   "Gas",
+  "Transportation",
+  "Banking",
+  "Clothing",
+  "Subscriptions",
+  "Entertainment",
+  "Education",
+  "Gifts & Donations",
   "Other",
 ] as const;
 
@@ -67,18 +74,7 @@ export function saveUserRule(itemKey: string, category: string): void {
  * Saves the result to user_rules.json for future offline use.
  */
 export async function categorizeWithAI(itemName: string): Promise<CategoryName> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return "Other";
-
-  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-  const result = await model.generateContent(`${CATEGORY_PROMPT}\n\nItem: ${itemName.trim()}`);
-  const text = result.response.text()?.trim() ?? "";
-  const category = ALLOWED_CATEGORIES.find(
-    (c) => c.toLowerCase() === text.toLowerCase()
-  ) ?? "Other";
-
-  const key = itemName.trim().toLowerCase();
-  if (key) saveUserRule(key, category);
-
-  return category;
+  void itemName;
+  // No external calls; fallback category only.
+  return "Other";
 }

@@ -15,7 +15,6 @@ import {
 } from "./unifiedSchema";
 import { buildConfidenceScores, type ConfidenceScores } from "./confidenceScoring";
 import { repairAndClassify } from "../services/localModelService";
-import { parseReceiptImage } from "../services/aiService";
 import { setLastReceiptDebug, isReceiptDebugEnabled } from "./receiptDebug";
 
 export interface HybridPipelineOptions {
@@ -36,8 +35,9 @@ export interface HybridPipelineResult {
 }
 
 const DEFAULT_OPTIONS: HybridPipelineOptions = {
-  cloudFallbackEnabled: process.env.RECEIPT_CLOUD_FALLBACK_ENABLED !== "0",
-  useCloudWhenNeedsReview: process.env.RECEIPT_USE_CLOUD_WHEN_NEEDS_REVIEW !== "0",
+  // Cloud AI removed (on-device-first). Keep options for compatibility but default to false.
+  cloudFallbackEnabled: false,
+  useCloudWhenNeedsReview: false,
   localRepairEnabled: true,
 };
 
@@ -51,34 +51,9 @@ function engineToUnifiedItems(engine: EngineResult): UnifiedReceiptItem[] {
       i.unitPrice,
       i.totalPrice,
       i.category,
-      i.totalPrice > 0 ? 1 : 0.5
+      i.totalPrice > 0 ? 1 : 0.5,
+      i.subcategory ?? undefined
     )
-  );
-}
-
-function cloudPayloadToUnified(parsed: Awaited<ReturnType<typeof parseReceiptImage>>): UnifiedReceiptResult {
-  const items: UnifiedReceiptItem[] = (parsed.items || []).map((it) =>
-    toUnifiedItem(
-      it.name,
-      it.rawName ?? it.name,
-      Number(it.quantity) || 1,
-      (it as { unit?: string }).unit?.trim() || "item",
-      Number(it.unitPrice) || 0,
-      Number(it.totalPrice) || 0,
-      it.category ?? "Other",
-      1
-    )
-  );
-  return toUnifiedResult(
-    parsed.storeName?.trim() || "Unknown Store",
-    parsed.date || new Date().toISOString().slice(0, 10),
-    Number(parsed.subtotal) || 0,
-    Number(parsed.tax) || 0,
-    Number(parsed.total) || 0,
-    items,
-    "high",
-    "cloud",
-    "verified"
   );
 }
 
@@ -99,49 +74,57 @@ export async function runHybridPipeline(
   try {
     engine = await processReceiptText(rawText);
   } catch (e) {
-    if (base64Image && opts.cloudFallbackEnabled) {
-      const parsed = await parseReceiptImage(base64Image);
-      const result = cloudPayloadToUnified(parsed);
-      const pipelineDebug = {
-        rawOcrLength: rawLength,
-        lineCount,
+    const msg = e instanceof Error ? e.message : String(e);
+    const result = toUnifiedResult(
+      "Unknown Store",
+      new Date().toISOString().slice(0, 10),
+      0,
+      0,
+      0,
+      [],
+      "low",
+      "local",
+      "needs_review",
+      undefined
+    );
+    const pipelineDebug = {
+      rawOcrLength: rawLength,
+      lineCount,
+      localModelInvoked: false,
+      cloudFallbackInvoked: false,
+      extractionSource: "local",
+      overallConfidence: "low",
+      finalTotal: 0,
+      finalItemCount: 0,
+      analyticsIncluded: false,
+      error: msg,
+    };
+    if (isReceiptDebugEnabled()) {
+      setLastReceiptDebug({
+        timestamp: new Date().toISOString(),
+        source: "hybrid",
+        rawOcrText: rawText.slice(0, 10000),
         localModelInvoked: false,
-        cloudFallbackInvoked: true,
-        extractionSource: "cloud",
-        overallConfidence: "high",
-        finalTotal: result.total,
-        finalItemCount: result.items.length,
-        analyticsIncluded: true,
-        error: e instanceof Error ? e.message : String(e),
-      };
-      if (isReceiptDebugEnabled()) {
-        setLastReceiptDebug({
-          timestamp: new Date().toISOString(),
-          source: "hybrid",
-          rawOcrText: rawText.slice(0, 10000),
-          localModelInvoked: false,
-          cloudFallbackInvoked: true,
-          extractionSource: "cloud",
-          analyticsIncluded: true,
-          pipelineDebug,
-        });
-      }
-      return {
-        result,
-        confidenceScores: {
-          ocrCoverage: 0,
-          totalExtraction: 0,
-          merchantDetection: 0,
-          itemExtraction: 0,
-          categoryAssignment: 0,
-          overall: "low",
-        },
-        localModelInvoked: false,
-        cloudFallbackInvoked: true,
+        cloudFallbackInvoked: false,
+        extractionSource: "local",
+        analyticsIncluded: false,
         pipelineDebug,
-      };
+      });
     }
-    throw e;
+    return {
+      result,
+      confidenceScores: {
+        ocrCoverage: 0,
+        totalExtraction: 0,
+        merchantDetection: 0,
+        itemExtraction: 0,
+        categoryAssignment: 0,
+        overall: "low",
+      },
+      localModelInvoked: false,
+      cloudFallbackInvoked: false,
+      pipelineDebug,
+    };
   }
 
   const linesWithPrice = engine.items.filter((i) => i.totalPrice > 0).length;
@@ -167,59 +150,7 @@ export async function runHybridPipeline(
   let cloudFallbackInvoked = false;
   let result: UnifiedReceiptResult;
 
-  if (engine.needsReview && base64Image && opts.cloudFallbackEnabled && opts.useCloudWhenNeedsReview) {
-    try {
-      const parsed = await parseReceiptImage(base64Image);
-      result = cloudPayloadToUnified(parsed);
-      cloudFallbackInvoked = true;
-    } catch {
-      if (confidenceScores.overall === "high") {
-        result = toUnifiedResult(
-          engine.storeName,
-          engine.date,
-          engine.subtotal,
-          engine.tax,
-          engine.total,
-          engineToUnifiedItems(engine),
-          "high",
-          "local",
-          "needs_review"
-        );
-      } else if (confidenceScores.overall === "medium" && opts.localRepairEnabled) {
-        const unifiedItems = engineToUnifiedItems(engine);
-        const repair = await repairAndClassify({
-          rawOcrText: rawText,
-          merchantName: engine.storeName,
-          items: unifiedItems,
-          total: engine.total,
-        });
-        localModelInvoked = repair.invoked;
-        result = toUnifiedResult(
-          repair.merchantName,
-          engine.date,
-          engine.subtotal,
-          engine.tax,
-          repair.total,
-          repair.items,
-          "medium",
-          localModelInvoked ? "local_ai_repair" : "local",
-          "needs_review"
-        );
-      } else {
-        result = toUnifiedResult(
-          engine.storeName,
-          engine.date,
-          engine.subtotal,
-          engine.tax,
-          engine.total,
-          engineToUnifiedItems(engine),
-          confidenceScores.overall,
-          "local",
-          "needs_review"
-        );
-      }
-    }
-  } else if (confidenceScores.overall === "high") {
+  if (confidenceScores.overall === "high") {
     result = toUnifiedResult(
       engine.storeName,
       engine.date,
@@ -229,7 +160,8 @@ export async function runHybridPipeline(
       engineToUnifiedItems(engine),
       "high",
       "local",
-      engine.needsReview ? "needs_review" : "verified"
+      engine.needsReview ? "needs_review" : "verified",
+      engine.storeAddress
     );
   } else if (confidenceScores.overall === "medium" && opts.localRepairEnabled) {
     const unifiedItems = engineToUnifiedItems(engine);
@@ -249,26 +181,23 @@ export async function runHybridPipeline(
       repair.items,
       "medium",
       localModelInvoked ? "local_ai_repair" : "local",
-      engine.needsReview ? "needs_review" : "verified"
+      engine.needsReview ? "needs_review" : "verified",
+      engine.storeAddress
     );
-  } else if (confidenceScores.overall === "low" && base64Image && opts.cloudFallbackEnabled) {
-    try {
-      const parsed = await parseReceiptImage(base64Image);
-      result = cloudPayloadToUnified(parsed);
-      cloudFallbackInvoked = true;
-    } catch (cloudErr) {
-      result = toUnifiedResult(
-        engine.storeName,
-        engine.date,
-        engine.subtotal,
-        engine.tax,
-        engine.total,
-        engineToUnifiedItems(engine),
-        "low",
-        "local",
-        "needs_review"
-      );
-    }
+  } else if (confidenceScores.overall === "low") {
+    // Cloud disabled; keep local result and mark needs_review.
+    result = toUnifiedResult(
+      engine.storeName,
+      engine.date,
+      engine.subtotal,
+      engine.tax,
+      engine.total,
+      engineToUnifiedItems(engine),
+      "low",
+      "local",
+      "needs_review",
+      engine.storeAddress
+    );
   } else {
     result = toUnifiedResult(
       engine.storeName,
@@ -279,7 +208,8 @@ export async function runHybridPipeline(
       engineToUnifiedItems(engine),
       confidenceScores.overall,
       "local",
-      "needs_review"
+      engine.needsReview ? "needs_review" : "verified",
+      engine.storeAddress
     );
   }
 

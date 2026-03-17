@@ -84,9 +84,9 @@ router.get("/summary", async (req: AuthRequest, res: Response) => {
       include: { store: true, items: true },
     });
 
-    const totalSpent = receipts.reduce((sum, r) => sum + Number(r.total), 0);
+    let totalSpent = receipts.reduce((sum, r) => sum + Number(r.total), 0);
     const storeIds = new Set(receipts.map((r) => r.storeId));
-    const totalStores = storeIds.size;
+    let totalStores = storeIds.size;
 
     const categorySums: Record<string, number> = {};
     for (const r of receipts) {
@@ -94,6 +94,19 @@ router.get("/summary", async (req: AuthRequest, res: Response) => {
         const cat = item.category ?? "Other";
         categorySums[cat] = (categorySums[cat] ?? 0) + Number(item.totalPrice);
       }
+    }
+
+    // Include user's share of group expenses in total and categories
+    const mySplits = await prisma.expenseSplit.findMany({
+      where: { userId: user.id },
+      include: { expense: { select: { category: true } } },
+    });
+    for (const split of mySplits) {
+      const amount = Number(split.amountOwed);
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+      totalSpent += amount;
+      const cat = (split.expense?.category ?? "").trim() || "Other";
+      categorySums[cat] = (categorySums[cat] ?? 0) + amount;
     }
 
     const categories = Object.entries(categorySums)

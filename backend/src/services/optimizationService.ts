@@ -25,6 +25,16 @@ function normalizeName(name: string): string {
   return name.toLowerCase().trim().replace(/\s+/g, " ");
 }
 
+/** Strip size/units and common modifiers so "Milk 2% 1L" and "Organic Milk" both match "milk". */
+function stripSizeAndUnits(normalized: string): string {
+  return normalized
+    .replace(/\b\d*\.?\d+\s*(l|liter|litre|ml|g|kg|lb|oz|mg|ml)\b/gi, " ")
+    .replace(/\b\d+%\s*/g, " ")
+    .replace(/\b(organic|whole|skim|2%|1%|fat\s*free|low\s*fat|large|medium|small|dozen|pack|ct|pk|ea)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim() || normalized;
+}
+
 /**
  * Find the best single store to visit for the entire basket (Best Overall Basket):
  * - For each list item, get historical unit prices by store from past receipts.
@@ -54,33 +64,63 @@ export async function optimizeBasket(
     },
   });
 
-  // Build map: normalized product name -> list of { storeId, storeName, storeAddress, unitPrice }
-  const priceByProductAndStore = new Map<
-    string,
-    Array<{ storeId: string; storeName: string; storeAddress: string | null; unitPrice: number }>
-  >();
+  type PriceEntry = {
+    storeId: string;
+    storeName: string;
+    storeAddress: string | null;
+    unitPrice: number;
+    receiptItemName?: string;
+  };
+  const priceByProductAndStore = new Map<string, PriceEntry[]>();
 
   for (const it of historicalItems) {
     const key = normalizeName(it.name);
+    const coreKey = stripSizeAndUnits(key);
     const entry = {
       storeId: it.receipt.storeId,
       storeName: it.receipt.store.name,
       storeAddress: it.receipt.store.address,
       unitPrice: it.unitPrice,
+      receiptItemName: it.name,
     };
-    if (!priceByProductAndStore.has(key)) {
-      priceByProductAndStore.set(key, []);
+    for (const k of [key, coreKey].filter(Boolean)) {
+      if (!priceByProductAndStore.has(k)) priceByProductAndStore.set(k, []);
+      const arr = priceByProductAndStore.get(k)!;
+      const existing = arr.find((e) => e.storeId === entry.storeId);
+      if (!existing) arr.push({ ...entry });
+      else if (entry.unitPrice < existing.unitPrice) existing.unitPrice = entry.unitPrice;
     }
-    const arr = priceByProductAndStore.get(key)!;
-    const existing = arr.find((e) => e.storeId === entry.storeId);
-    if (!existing) arr.push(entry);
-    else if (entry.unitPrice < existing.unitPrice) existing.unitPrice = entry.unitPrice;
   }
 
-  // For each list item, find best price per store (min unit price at that store for that product)
+  /** Match basket item to receipt items: exact key, core key (strip size/units), or substring. */
+  function getCandidatesForBasketItem(basketKey: string): Array<{ storeId: string; storeName: string; storeAddress: string | null; unitPrice: number; receiptItemName?: string }> {
+    const coreBasket = stripSizeAndUnits(basketKey);
+    const results = new Map<string, { storeId: string; storeName: string; storeAddress: string | null; unitPrice: number; receiptItemName?: string }>();
+    for (const [receiptKey, entries] of priceByProductAndStore) {
+      const coreReceipt = stripSizeAndUnits(receiptKey);
+      const match =
+        basketKey.length >= 2 &&
+        (receiptKey.includes(basketKey) ||
+          basketKey.includes(receiptKey) ||
+          coreReceipt.includes(coreBasket) ||
+          coreBasket.includes(coreReceipt));
+      if (!match) continue;
+      for (const e of entries) {
+        const cur = results.get(e.storeId);
+        if (!cur || e.unitPrice < cur.unitPrice) results.set(e.storeId, { ...e });
+      }
+    }
+    return [...results.values()];
+  }
+
+  // For each list item, find best price per store (exact → core → substring)
   const listItemPrices = listItems.map((li) => {
     const key = normalizeName(li.name);
-    const candidates = priceByProductAndStore.get(key) ?? [];
+    const coreKey = stripSizeAndUnits(key);
+    const candidates =
+      priceByProductAndStore.get(key) ??
+      priceByProductAndStore.get(coreKey) ??
+      getCandidatesForBasketItem(key);
     return {
       name: li.name,
       quantity: li.quantity,

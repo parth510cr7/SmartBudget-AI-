@@ -1,4 +1,5 @@
 import { prisma } from "../lib/db";
+import { isEssentialCategoryForPriceTracking } from "../config/categories";
 
 type ShareMode = "NONE" | "PRIVATE" | "GROUP" | "COMMUNITY";
 
@@ -33,13 +34,17 @@ function toCanonicalStoreName(rawStoreName: string): string {
  * Future hooks: reviewBeforeSync (skip auto-sync until reviewed), excludedCategories (skip by category).
  *
  * @param receiptId - ID of the saved receipt
- * @param userSharePreference - User's chosen share mode (GROUP/PRIVATE from receipt; COMMUNITY only if opt-in + eligible)
+ * @param userSharePreference - User's chosen share mode (GROUP/PRIVATE/COMMUNITY)
  * @param cityOrArea - Geographic context (e.g. "Toronto", "Unknown")
+ * @param lat - Optional user lat for 30km community filter
+ * @param lng - Optional user lng for 30km community filter
  */
 export async function syncReceiptToPriceRecords(
   receiptId: string,
   userSharePreference: ShareMode,
-  cityOrArea: string
+  cityOrArea: string,
+  lat?: number | null,
+  lng?: number | null
 ): Promise<void> {
   const receipt = await prisma.receipt.findUnique({
     where: { id: receiptId },
@@ -64,7 +69,9 @@ export async function syncReceiptToPriceRecords(
   // Do not silently convert all records to COMMUNITY just because opt-in exists.
   const userOptedInCommunity = receipt.user?.isCommunityOptIn === true;
 
-  const records = receipt.items.map((item) => {
+  const records = receipt.items
+    .filter((item) => isEssentialCategoryForPriceTracking(item.category))
+    .map((item) => {
     const confidenceScore =
       (item as unknown as { confidenceScore?: number }).confidenceScore ?? 1.0;
 
@@ -79,6 +86,9 @@ export async function syncReceiptToPriceRecords(
     const quantity = item.quantity ?? 1;
     const price = item.totalPrice;
     const normalizedUnitPrice = quantity > 0 ? price / quantity : price;
+
+    const latNum = typeof lat === "number" && Number.isFinite(lat) ? lat : null;
+    const lngNum = typeof lng === "number" && Number.isFinite(lng) ? lng : null;
 
     return {
       sourceReceiptId: receiptId,
@@ -101,9 +111,19 @@ export async function syncReceiptToPriceRecords(
       currency: "USD",
       purchaseDate,
       cityOrArea: cityOrArea || null,
+      lat: latNum,
+      lng: lngNum,
       confidenceScore,
     };
   });
+
+  if (records.length === 0) return;
+
+  if (userSharePreference === "COMMUNITY") {
+    await prisma.priceRecord.deleteMany({
+      where: { sourceReceiptId: receiptId, shareMode: "COMMUNITY" },
+    });
+  }
 
   await prisma.priceRecord.createMany({
     data: records,

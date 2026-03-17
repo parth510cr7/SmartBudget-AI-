@@ -7,6 +7,11 @@ datasource db {
   provider = "postgresql"
 }
 
+enum ReceiptVisibility {
+  PERSONAL
+  HOUSEHOLD
+}
+
 model User {
   id                    String                 @id @default(uuid())
   firebaseId            String                 @unique
@@ -20,6 +25,7 @@ model User {
   updatedAt             DateTime               @updatedAt
   stores                Store[]
   receipts              Receipt[]
+  receiptsUploaded      Receipt[]              @relation("ReceiptUploadedBy")
   smartLists            SmartList[]
   medicalFolders        MedicalFolder[]
   incomes               Income[]
@@ -40,6 +46,9 @@ model User {
   priceRecordsCreated   PriceRecord[]       @relation("PriceRecordCreatedBy")
   priceSharePermissions PriceSharePermission[]
   isCommunityOptIn      Boolean    @default(true)
+
+  householdOwned        Household?            @relation("HouseholdOwner")
+  householdMemberships  HouseholdMember[]
 }
 
 model Store {
@@ -60,6 +69,11 @@ model Receipt {
   id        String    @id @default(uuid())
   userId    String
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  uploadedByUserId String?
+  uploadedByUser   User?     @relation("ReceiptUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  householdId      String?
+  household        Household? @relation(fields: [householdId], references: [id], onDelete: SetNull)
+  visibilityType   ReceiptVisibility @default(PERSONAL)
   storeId   String
   store     Store     @relation(fields: [storeId], references: [id])
   groupId   String?
@@ -69,6 +83,8 @@ model Receipt {
   tax       Float
   total     Float
   imageUrl  String?
+  /** Base64-encoded image for serving via GET /receipts/:id/image (avoids invalid file:// URLs from client). */
+  imageDataBase64 String?
   /** VERIFIED = trusted for analytics; NEEDS_REVIEW = visible in Library but excluded from spend totals. */
   status    String    @default("VERIFIED")
   /** Pipeline that produced this receipt: "local" | "local_ai_repair" | "cloud". */
@@ -78,20 +94,63 @@ model Receipt {
   createdAt DateTime  @default(now())
   items     Item[]
   expenses  Expense[]
+
+  @@index([householdId])
+  @@index([uploadedByUserId])
+}
+
+model Household {
+  id          String            @id @default(uuid())
+  name        String
+  ownerUserId String            @unique
+  ownerUser   User              @relation("HouseholdOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  maxMembers  Int               @default(5)
+  createdAt   DateTime          @default(now())
+
+  members     HouseholdMember[]
+  receipts    Receipt[]
+  invites     HouseholdInvite[]
+}
+
+model HouseholdMember {
+  id          String    @id @default(uuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        String    @default("member") // "owner" | "member"
+  status      String    @default("active") // "active" | "left" | "removed"
+  joinedAt    DateTime  @default(now())
+
+  @@unique([householdId, userId])
+  @@index([userId])
+}
+
+model HouseholdInvite {
+  id          String    @id @default(uuid())
+  token       String    @unique
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+
+  @@index([token])
+  @@index([householdId])
 }
 
 model Item {
-  id         String   @id @default(uuid())
-  receiptId  String
-  receipt    Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
-  name       String
-  rawName    String
-  quantity   Float
-  unit       String? // e.g. "g", "kg", "lb", "oz", "ml", "L", "item" – for price-per-unit comparison
-  unitPrice  Float
-  totalPrice Float
-  category   String
-  createdAt  DateTime @default(now())
+  id          String   @id @default(uuid())
+  receiptId   String
+  receipt     Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  name        String
+  rawName     String
+  quantity    Float
+  unit        String?  // e.g. "g", "kg", "lb", "oz", "ml", "L", "item" – for price-per-unit comparison
+  unitPrice   Float
+  totalPrice  Float
+  category    String
+  subcategory String?  // from household essentials tree (e.g. "Staples", "Dairy & Eggs", "Cleaning Supplies")
+  createdAt   DateTime @default(now())
 
   @@index([name])
 }
@@ -335,6 +394,9 @@ model PriceRecord {
 
   purchaseDate    DateTime
   cityOrArea      String?
+  /** User location when receipt was uploaded (for 30km community filter). */
+  lat             Float?
+  lng             Float?
   confidenceScore Float?   @default(1.0)
 
   createdAt DateTime @default(now())
