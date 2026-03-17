@@ -3,6 +3,7 @@
  * Uses llama.rn: initLlama returns context, then context.completion().
  */
 
+import { Platform } from "react-native";
 import type { ReceiptParseResult } from "./receiptParseTypes";
 
 const RECEIPT_SYSTEM = `You are a receipt parser. Extract from the receipt text: store name (one short phrase), total (number, e.g. 42.99), and date (YYYY-MM-DD if present, else empty string). Reply with only valid JSON, no markdown: {"store":"Name","total":0.00,"date":"YYYY-MM-DD"}`;
@@ -26,7 +27,7 @@ export function isLLMAvailable(): boolean {
 
 /**
  * Initialize the LLM with the given GGUF model path (file:// or absolute path).
- * Returns true if init succeeded.
+ * Returns true if init succeeded; throws with a clear message if init fails.
  */
 export async function initOnDeviceLLM(
   modelPath: string,
@@ -35,15 +36,15 @@ export async function initOnDeviceLLM(
   if (initPromise != null) return initPromise;
   initPromise = (async () => {
     if (llamaContext != null) return true;
+    const { initLlama } = require("llama.rn");
+    const path = modelPath.startsWith("file://") ? modelPath : `file://${modelPath}`;
     try {
-      const { initLlama } = require("llama.rn");
-      const path = modelPath.startsWith("file://") ? modelPath : `file://${modelPath}`;
       const context = await initLlama(
         {
           model: path,
           use_mlock: true,
           n_ctx: 2048,
-          n_gpu_layers: 99,
+          n_gpu_layers: Platform.OS === "ios" ? 0 : 99,
           n_batch: 512,
           n_threads: 4,
         },
@@ -53,10 +54,12 @@ export async function initOnDeviceLLM(
         llamaContext = context;
         return true;
       }
-      return false;
+      throw new Error("Init returned no context");
     } catch (e) {
-      if (__DEV__) console.warn("[OnDeviceLLM] init failed", e);
-      return false;
+      initPromise = null;
+      const msg = e instanceof Error ? e.message : String(e);
+      if (__DEV__) console.warn("[OnDeviceLLM] init failed", msg, e);
+      throw new Error(msg || "Failed to load model");
     }
   })();
   return initPromise;

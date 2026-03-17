@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Camera, FolderOpen, ImageUp } from "lucide-react-native";
-import { getSummary, getReceipts } from "../../src/api/client";
+import { getReceipts } from "../../src/api/client";
 import { useStore } from "../../src/store/useStore";
 import { getTheme, IOS_BLUE, SPACING, RADIUS } from "../../src/theme";
 

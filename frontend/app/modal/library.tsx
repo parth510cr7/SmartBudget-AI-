@@ -11,17 +11,26 @@ import {
   Modal,
   TextInput,
 } from "react-native";
-import { useRouter } from "expo-router";
-import { X, Trash2, Users, Check, Circle, ArrowLeft, CheckCircle } from "lucide-react-native";
+import { useRouter, useFocusEffect } from "expo-router";
+import { X, Trash2, Users, Check, Circle, ArrowLeft, CheckCircle, Stethoscope } from "lucide-react-native";
 import {
   getReceipts,
+  getReceiptImageDataUri,
   deleteTransaction,
   approveReceipt,
   getGroups,
   getGroupDashboard,
   setReceiptGroup,
   shareReceiptToGroup,
+  getReceiptMedicalSuggestions,
+  addReceiptToMedical,
+  getMedicalFolders,
+  updateReceiptItem,
+  updateReceiptDate,
+  getMyHousehold,
+  getHouseholdReceipts,
   type GroupRow,
+  type HouseholdReceiptRow,
 } from "../../src/api/client";
 import { useStore } from "../../src/store/useStore";
 import { getTheme, IOS_BLUE } from "../../src/theme";
@@ -30,15 +39,21 @@ function triggerDashboardRefresh() {
   useStore.getState().triggerDashboardRefresh();
 }
 
-type ReceiptItem = { id?: string; name?: string; rawName?: string; totalPrice?: number };
+const ITEM_CATEGORIES = [
+  "Groceries", "Household", "Personal Care", "Health", "Baby", "Pet", "Electronics", "Dining",
+  "Gas", "Transportation", "Banking", "Clothing", "Subscriptions", "Entertainment",
+  "Education", "Gifts & Donations", "Other",
+];
+type ReceiptItem = { id?: string; name?: string; rawName?: string; totalPrice?: number; category?: string; subcategory?: string | null };
 type ReceiptWithStore = {
   id: string;
   total: number;
   date?: string;
   imageUrl: string | null;
-  store: { name: string };
+  store: { name: string; id?: string };
   status?: string;
   items?: ReceiptItem[];
+  uploadedBy?: { userId: string; name: string };
 };
 
 function loadReceipts(
@@ -57,6 +72,90 @@ function loadReceipts(
     .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"))
     .finally(() => setLoading(false));
 }
+
+/** True when imageUrl is our backend receipt image endpoint (requires auth to load). Match by path so it works regardless of host. */
+function isBackendReceiptImageUrl(imageUrl: string | null): boolean {
+  if (!imageUrl || typeof imageUrl !== "string") return false;
+  return imageUrl.includes("/api/receipts/") && imageUrl.includes("/image");
+}
+
+/** Thumbnail that fetches with auth when image is served by our API (so it displays instead of blank). */
+function ReceiptThumbnail({
+  receiptId,
+  imageUrl,
+  storeName,
+  total,
+  authToken,
+  bg,
+  textPrimary,
+  textSecondary,
+  onDeletePress,
+  children,
+}: {
+  receiptId: string;
+  imageUrl: string | null;
+  storeName: string;
+  total: number;
+  authToken: string | null;
+  bg: string;
+  textPrimary: string;
+  textSecondary: string;
+  onDeletePress: () => void;
+  children?: React.ReactNode;
+}) {
+  const [dataUri, setDataUri] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const isBackend = isBackendReceiptImageUrl(imageUrl);
+
+  useEffect(() => {
+    if (!isBackend || !authToken) return;
+    setLoading(true);
+    getReceiptImageDataUri(authToken, receiptId)
+      .then(setDataUri)
+      .finally(() => setLoading(false));
+  }, [receiptId, authToken, isBackend]);
+
+  const uri = isBackend ? dataUri : imageUrl;
+  return (
+    <View style={libraryStyles.imageWrapOuter}>
+      {uri ? (
+        <Image source={{ uri }} style={libraryStyles.image} resizeMode="cover" />
+      ) : loading ? (
+        <View style={[libraryStyles.imagePlaceholder, { backgroundColor: bg }]}>
+          <ActivityIndicator size="small" color={IOS_BLUE} />
+        </View>
+      ) : (
+        <View style={[libraryStyles.imagePlaceholder, { backgroundColor: bg }]}>
+          <Text style={[libraryStyles.placeholderStore, { color: textSecondary }]} numberOfLines={2}>{storeName}</Text>
+          <Text style={[libraryStyles.placeholderTotal, { color: textPrimary }]}>{`$${total.toFixed(2)}`}</Text>
+        </View>
+      )}
+      <TouchableOpacity style={libraryStyles.trashBtn} onPress={onDeletePress} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        <Trash2 size={20} color="#FFF" />
+      </TouchableOpacity>
+      {children}
+    </View>
+  );
+}
+
+const libraryStyles = {
+  imageWrapOuter: { width: "100%", aspectRatio: 1, position: "relative" as const, backgroundColor: "transparent" },
+  image: { width: "100%", height: "100%" },
+  imagePlaceholder: { width: "100%", height: "100%", alignItems: "center" as const, justifyContent: "center" as const, padding: 12 },
+  placeholderStore: { fontSize: 13, textAlign: "center" as const, marginBottom: 4 },
+  placeholderTotal: { fontSize: 18, fontWeight: "700" as const },
+  trashBtn: {
+    position: "absolute" as const,
+    top: 8,
+    right: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+  },
+};
 
 export default function LibraryModal() {
   const router = useRouter();
@@ -77,7 +176,21 @@ export default function LibraryModal() {
   const [membersLoading, setMembersLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [detailReceipt, setDetailReceipt] = useState<ReceiptWithStore | null>(null);
+  const [detailImageUri, setDetailImageUri] = useState<string | null>(null);
   const [approveLoading, setApproveLoading] = useState(false);
+  const [addToMedicalModal, setAddToMedicalModal] = useState(false);
+  const [medicalFolders, setMedicalFolders] = useState<{ id: string; patientName: string }[]>([]);
+  const [medicalSuggestions, setMedicalSuggestions] = useState<{ rxItemIds: string[]; allItemIds: string[] } | null>(null);
+  const [selectedMedicalFolderId, setSelectedMedicalFolderId] = useState<string | null>(null);
+  const [selectedMedicalItemIds, setSelectedMedicalItemIds] = useState<string[]>([]);
+  const [addToMedicalLoading, setAddToMedicalLoading] = useState(false);
+  const [editingCategoryItemId, setEditingCategoryItemId] = useState<string | null>(null);
+  const [updateItemLoading, setUpdateItemLoading] = useState(false);
+  const [dateEditOpen, setDateEditOpen] = useState(false);
+  const [dateEditValue, setDateEditValue] = useState("");
+  const [dateEditSaving, setDateEditSaving] = useState(false);
+  const [householdReceipts, setHouseholdReceipts] = useState<HouseholdReceiptRow[]>([]);
+  const [householdReceiptsLoading, setHouseholdReceiptsLoading] = useState(false);
 
   const refresh = useCallback(
     (search?: string) => {
@@ -89,6 +202,64 @@ export default function LibraryModal() {
   useEffect(() => {
     refresh();
   }, [authToken]);
+
+  useEffect(() => {
+    if (!authToken) {
+      setHouseholdReceipts([]);
+      return;
+    }
+    setHouseholdReceiptsLoading(true);
+    getMyHousehold(authToken)
+      .then((res) => {
+        if (res.household) {
+          return getHouseholdReceipts(authToken).then(setHouseholdReceipts);
+        }
+        setHouseholdReceipts([]);
+      })
+      .catch(() => setHouseholdReceipts([]))
+      .finally(() => setHouseholdReceiptsLoading(false));
+  }, [authToken]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (detailReceipt) return;
+      refresh();
+      if (authToken) {
+        getMyHousehold(authToken)
+          .then((res) => {
+            if (res.household) {
+              return getHouseholdReceipts(authToken).then(setHouseholdReceipts);
+            }
+            setHouseholdReceipts([]);
+          })
+          .catch(() => setHouseholdReceipts([]));
+      }
+      return () => {};
+    }, [authToken, refresh, detailReceipt])
+  );
+
+  useEffect(() => {
+    setDetailReceipt(null);
+  }, []);
+
+  useEffect(() => {
+    if (!detailReceipt || !authToken) {
+      setDetailImageUri(null);
+      return;
+    }
+    const url = detailReceipt.imageUrl ?? null;
+    if (!isBackendReceiptImageUrl(url)) {
+      setDetailImageUri(url || null);
+      return;
+    }
+    let cancelled = false;
+    setDetailImageUri(null);
+    getReceiptImageDataUri(authToken, detailReceipt.id)
+      .then((uri) => {
+        if (!cancelled) setDetailImageUri(uri);
+      });
+    return () => { cancelled = true; };
+  }, [detailReceipt?.id, detailReceipt?.imageUrl, authToken]);
 
   const openSplitModal = (r: ReceiptWithStore) => {
     setSplitModalReceipt(r);
@@ -188,25 +359,17 @@ export default function LibraryModal() {
             <View key={r.id} style={[styles.card, { backgroundColor: glass }]}>
               <TouchableOpacity onPress={() => setDetailReceipt(r)} activeOpacity={0.8} style={styles.cardTappable}>
                 <View style={[styles.imageWrap, { backgroundColor: bg }]}>
-                  {r.imageUrl ? (
-                    <Image
-                      source={{ uri: r.imageUrl }}
-                      style={styles.image}
-                      resizeMode="cover"
-                    />
-                  ) : (
-                    <View style={[styles.imagePlaceholder, { backgroundColor: bg }]}>
-                      <Text style={[styles.placeholderStore, { color: textSecondary }]} numberOfLines={2}>{storeName}</Text>
-                      <Text style={[styles.placeholderTotal, { color: textPrimary }]}>${total.toFixed(2)}</Text>
-                    </View>
-                  )}
-                  <TouchableOpacity
-                    style={styles.trashBtn}
-                    onPress={() => onDeletePress(r)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Trash2 size={20} color="#FFF" />
-                  </TouchableOpacity>
+                  <ReceiptThumbnail
+                    receiptId={r.id}
+                    imageUrl={r.imageUrl ?? null}
+                    storeName={storeName}
+                    total={total}
+                    authToken={authToken}
+                    bg={bg}
+                    textPrimary={textPrimary}
+                    textSecondary={textSecondary}
+                    onDeletePress={() => onDeletePress(r)}
+                  />
                 </View>
                 <View style={styles.storeNameRow}>
                   <Text style={[styles.storeName, { color: textPrimary }]} numberOfLines={1}>
@@ -231,6 +394,56 @@ export default function LibraryModal() {
             </View>
           );
           })}
+          {householdReceipts.length > 0 && (
+            <>
+              <View style={[styles.sectionHeaderWrap, { width: "100%" }]}>
+                <Text style={[styles.sectionHeaderTitle, { color: textPrimary }]}>Household receipts</Text>
+                <Text style={[styles.sectionHeaderSub, { color: textSecondary }]}>Shared with your household</Text>
+              </View>
+              {householdReceipts.map((r) => {
+                const total = typeof r.total === "number" && Number.isFinite(r.total) ? r.total : 0;
+                const storeName = r.store?.name ?? "Store";
+                const asDetail: ReceiptWithStore = {
+                  id: r.id,
+                  total: r.total,
+                  date: r.date,
+                  imageUrl: r.imageUrl,
+                  store: { name: r.store.name, id: r.store.id },
+                  status: r.status,
+                  items: r.items,
+                  uploadedBy: r.uploadedBy,
+                };
+                return (
+                  <View key={`household-${r.id}`} style={[styles.card, { backgroundColor: glass }]}>
+                    <TouchableOpacity onPress={() => setDetailReceipt(asDetail)} activeOpacity={0.8} style={styles.cardTappable}>
+                      <View style={[styles.imageWrap, { backgroundColor: bg }]}>
+                        <ReceiptThumbnail
+                          receiptId={r.id}
+                          imageUrl={r.imageUrl ?? null}
+                          storeName={storeName}
+                          total={total}
+                          authToken={authToken}
+                          bg={bg}
+                          textPrimary={textPrimary}
+                          textSecondary={textSecondary}
+                          onDeletePress={() => {}}
+                        />
+                      </View>
+                      <View style={styles.storeNameRow}>
+                        <Text style={[styles.storeName, { color: textPrimary }]} numberOfLines={1}>
+                          {storeName}
+                        </Text>
+                      </View>
+                      <Text style={[styles.amount, { marginBottom: 2 }]}>${total.toFixed(2)}</Text>
+                      <Text style={[styles.uploadedBy, { color: textSecondary }]} numberOfLines={1}>
+                        Uploaded by {r.uploadedBy?.name ?? "Household"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </>
+          )}
         </ScrollView>
       )}
 
@@ -246,10 +459,21 @@ export default function LibraryModal() {
               </TouchableOpacity>
             </View>
             {detailReceipt && (
-              <ScrollView style={styles.detailModalScroll} showsVerticalScrollIndicator={false}>
+              <ScrollView
+                style={styles.detailModalScroll}
+                showsVerticalScrollIndicator={false}
+                bounces={false}
+                keyboardShouldPersistTaps="handled"
+              >
                 {/* 1. Full receipt image first (zoom-in / open feel) */}
                 <View style={styles.detailImageSection}>
-                  {detailReceipt.imageUrl ? (
+                  {detailImageUri ? (
+                    <Image
+                      source={{ uri: detailImageUri }}
+                      style={styles.detailImageFull}
+                      resizeMode="contain"
+                    />
+                  ) : detailReceipt.imageUrl && !isBackendReceiptImageUrl(detailReceipt.imageUrl) ? (
                     <Image
                       source={{ uri: detailReceipt.imageUrl }}
                       style={styles.detailImageFull}
@@ -257,24 +481,52 @@ export default function LibraryModal() {
                     />
                   ) : (
                     <View style={[styles.detailImagePlaceholder, { backgroundColor: bg }]}>
-                      <Text style={[styles.detailImagePlaceholderText, { color: textSecondary }]}>
-                        No image
-                      </Text>
-                      <Text style={[styles.detailImagePlaceholderSub, { color: textSecondary }]}>
-                        {detailReceipt.store?.name ?? "Receipt"} · ${typeof detailReceipt.total === "number" ? detailReceipt.total.toFixed(2) : "0.00"}
-                      </Text>
+                      {detailReceipt.imageUrl && isBackendReceiptImageUrl(detailReceipt.imageUrl) ? (
+                        <ActivityIndicator size="large" color={IOS_BLUE} />
+                      ) : (
+                        <>
+                          <Text style={[styles.detailImagePlaceholderText, { color: textSecondary }]}>
+                            No image
+                          </Text>
+                          <Text style={[styles.detailImagePlaceholderSub, { color: textSecondary }]}>
+                            {detailReceipt.store?.name ?? "Receipt"} · ${typeof detailReceipt.total === "number" ? detailReceipt.total.toFixed(2) : "0.00"}
+                          </Text>
+                        </>
+                      )}
                     </View>
                   )}
                 </View>
                 {/* 2. Receipt data below the image */}
                 <View style={[styles.detailDataSection, { borderTopColor: bg }]}>
                   <Text style={[styles.detailDataSectionTitle, { color: textSecondary }]}>Receipt details</Text>
-                  <View style={styles.detailMeta}>
-                    <Text style={[styles.detailDate, { color: textSecondary }]}>
-                      {detailReceipt.date
-                        ? new Date(detailReceipt.date).toLocaleDateString("en-US", { dateStyle: "medium" })
-                        : "—"}
+                  {detailReceipt.uploadedBy && (
+                    <Text style={[styles.detailUploadedBy, { color: textSecondary }]}>
+                      Uploaded by {detailReceipt.uploadedBy.name}
                     </Text>
+                  )}
+                  <View style={styles.detailMeta}>
+                    {detailReceipt.uploadedBy && detailReceipt.uploadedBy.userId !== currentUserId ? (
+                      <Text style={[styles.detailDate, { color: textSecondary }]}>
+                        {detailReceipt.date
+                          ? new Date(detailReceipt.date).toLocaleDateString("en-US", { dateStyle: "medium" })
+                          : "—"}
+                      </Text>
+                    ) : (
+                      <TouchableOpacity
+                        onPress={() => {
+                          const d = detailReceipt.date;
+                          setDateEditValue(d ? d.slice(0, 10) : new Date().toISOString().slice(0, 10));
+                          setDateEditOpen(true);
+                        }}
+                      >
+                        <Text style={[styles.detailDate, { color: textSecondary }]}>
+                          {detailReceipt.date
+                            ? new Date(detailReceipt.date).toLocaleDateString("en-US", { dateStyle: "medium" })
+                            : "—"}
+                        </Text>
+                        <Text style={[styles.detailDateHint, { color: textSecondary }]}>Tap to edit date</Text>
+                      </TouchableOpacity>
+                    )}
                     <Text style={[styles.detailTotal, { color: textPrimary }]}>
                       Total: ${typeof detailReceipt.total === "number" ? detailReceipt.total.toFixed(2) : "0.00"}
                     </Text>
@@ -284,9 +536,20 @@ export default function LibraryModal() {
                       <Text style={[styles.detailItemsTitle, { color: textPrimary }]}>Items</Text>
                       {detailReceipt.items.map((item, idx) => (
                         <View key={item.id ?? idx} style={[styles.detailItemRow, { borderBottomColor: bg }]}>
-                          <Text style={[styles.detailItemName, { color: textPrimary }]} numberOfLines={2}>
-                            {item.name ?? item.rawName ?? "Item"}
-                          </Text>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.detailItemName, { color: textPrimary }]} numberOfLines={2}>
+                              {item.name ?? item.rawName ?? "Item"}
+                            </Text>
+                            <TouchableOpacity
+                              style={[styles.categoryChip, { backgroundColor: isDarkMode ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)" }]}
+                              onPress={() => item.id && setEditingCategoryItemId(item.id)}
+                              disabled={updateItemLoading || (!!detailReceipt?.uploadedBy && detailReceipt.uploadedBy.userId !== currentUserId)}
+                            >
+                              <Text style={[styles.categoryChipText, { color: textSecondary }]}>
+                                {(item.category ?? "Other").trim() || "Other"}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
                           <Text style={[styles.detailItemPrice, { color: textPrimary }]}>
                             ${typeof item.totalPrice === "number" ? item.totalPrice.toFixed(2) : "0.00"}
                           </Text>
@@ -294,7 +557,7 @@ export default function LibraryModal() {
                       ))}
                     </View>
                   )}
-                  {detailReceipt.status === "NEEDS_REVIEW" && (
+                  {detailReceipt.status === "NEEDS_REVIEW" && (!detailReceipt.uploadedBy || detailReceipt.uploadedBy.userId === currentUserId) && (
                     <TouchableOpacity
                       style={[styles.approveBtn, { backgroundColor: IOS_BLUE }]}
                       onPress={async () => {
@@ -323,8 +586,236 @@ export default function LibraryModal() {
                       )}
                     </TouchableOpacity>
                   )}
+                  {(!detailReceipt.uploadedBy || detailReceipt.uploadedBy.userId === currentUserId) && (
+                  <TouchableOpacity
+                    style={[styles.addToMedicalBtn, { backgroundColor: bg, borderColor: IOS_BLUE }]}
+                    onPress={async () => {
+                      if (!detailReceipt?.id) return;
+                      setAddToMedicalModal(true);
+                      setSelectedMedicalFolderId(null);
+                      try {
+                        const [suggestions, folders] = await Promise.all([
+                          getReceiptMedicalSuggestions(detailReceipt.id, authToken),
+                          getMedicalFolders(authToken),
+                        ]);
+                        setMedicalSuggestions({
+                          rxItemIds: suggestions.rxItemIds,
+                          allItemIds: suggestions.allItemIds,
+                        });
+                        setMedicalFolders(folders.map((f) => ({ id: f.id, patientName: f.patientName })));
+                        setSelectedMedicalItemIds(
+                          suggestions.rxItemIds.length > 0 ? suggestions.rxItemIds : suggestions.allItemIds
+                        );
+                        if (folders.length === 1) setSelectedMedicalFolderId(folders[0].id);
+                      } catch (e) {
+                        Alert.alert("Error", e instanceof Error ? e.message : "Could not load");
+                        setAddToMedicalModal(false);
+                      }
+                    }}
+                  >
+                    <Stethoscope size={20} color={IOS_BLUE} />
+                    <Text style={[styles.addToMedicalBtnText, { color: IOS_BLUE }]}>Add to medical</Text>
+                  </TouchableOpacity>
+                  )}
                 </View>
               </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={dateEditOpen && !!detailReceipt} transparent animationType="fade">
+        <View style={styles.splitModalOverlay}>
+          <View style={[styles.splitModalCard, { backgroundColor: glass }]}>
+            <View style={styles.splitModalHeader}>
+              <Text style={[styles.splitModalTitle, { color: textPrimary, flex: 1 }]}>Edit receipt date</Text>
+              <TouchableOpacity onPress={() => setDateEditOpen(false)} hitSlop={12}>
+                <X size={24} color={textPrimary} />
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.splitModalLabel, { color: textSecondary }]}>Date (YYYY-MM-DD)</Text>
+            <TextInput
+              style={[styles.dateEditInput, { color: textPrimary, backgroundColor: bg }]}
+              value={dateEditValue}
+              onChangeText={setDateEditValue}
+              placeholder="2024-01-15"
+              placeholderTextColor={textSecondary}
+              editable={!dateEditSaving}
+            />
+            <TouchableOpacity
+              style={[styles.approveBtn, { backgroundColor: IOS_BLUE, marginTop: 12 }]}
+              onPress={async () => {
+                if (!detailReceipt?.id) return;
+                const date = dateEditValue.trim().slice(0, 10);
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+                  Alert.alert("Invalid date", "Use YYYY-MM-DD (e.g. 2024-01-15)");
+                  return;
+                }
+                setDateEditSaving(true);
+                try {
+                  await updateReceiptDate(detailReceipt.id, date, authToken);
+                  setDetailReceipt((prev) => (prev ? { ...prev, date } : null));
+                  setDateEditOpen(false);
+                  triggerDashboardRefresh();
+                  refresh();
+                } catch (e) {
+                  Alert.alert("Error", e instanceof Error ? e.message : "Could not update date");
+                } finally {
+                  setDateEditSaving(false);
+                }
+              }}
+              disabled={dateEditSaving}
+            >
+              {dateEditSaving ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.approveBtnText}>Save date</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={!!editingCategoryItemId && !!detailReceipt} transparent animationType="fade">
+        <View style={styles.splitModalOverlay}>
+          <View style={[styles.splitModalCard, { backgroundColor: glass }]}>
+            <View style={styles.splitModalHeader}>
+              <Text style={[styles.splitModalTitle, { color: textPrimary, flex: 1 }]}>Change category</Text>
+              <TouchableOpacity onPress={() => setEditingCategoryItemId(null)} hitSlop={12}>
+                <X size={24} color={textPrimary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
+              {ITEM_CATEGORIES.map((cat) => (
+                <TouchableOpacity
+                  key={cat}
+                  style={[styles.splitGroupRow, { backgroundColor: bg }]}
+                  onPress={async () => {
+                    if (!detailReceipt?.id || !editingCategoryItemId) return;
+                    setUpdateItemLoading(true);
+                    try {
+                      await updateReceiptItem(detailReceipt.id, editingCategoryItemId, { category: cat }, authToken);
+                      setDetailReceipt((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              items:
+                                prev.items?.map((it) =>
+                                  it.id === editingCategoryItemId ? { ...it, category: cat } : it
+                                ) ?? [],
+                            }
+                          : null
+                      );
+                      setEditingCategoryItemId(null);
+                    } catch (e) {
+                      Alert.alert("Error", e instanceof Error ? e.message : "Could not update");
+                    } finally {
+                      setUpdateItemLoading(false);
+                    }
+                  }}
+                  disabled={updateItemLoading}
+                >
+                  <Text style={[styles.splitGroupName, { color: textPrimary }]}>{cat}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={addToMedicalModal && !!detailReceipt} transparent animationType="fade">
+        <View style={styles.splitModalOverlay}>
+          <View style={[styles.splitModalCard, { backgroundColor: glass }]}>
+            <View style={styles.splitModalHeader}>
+              <Text style={[styles.splitModalTitle, { color: textPrimary, flex: 1 }]}>Add to medical</Text>
+              <TouchableOpacity onPress={() => setAddToMedicalModal(false)} hitSlop={12}>
+                <X size={24} color={textPrimary} />
+              </TouchableOpacity>
+            </View>
+            {medicalFolders.length === 0 ? (
+              <Text style={[styles.splitModalEmpty, { color: textSecondary }]}>
+                Create a patient folder first (Medical tab in Profile).
+              </Text>
+            ) : (
+              <>
+                <Text style={[styles.splitModalLabel, { color: textSecondary }]}>Patient folder</Text>
+                <ScrollView style={{ maxHeight: 120 }} showsVerticalScrollIndicator={false}>
+                  {medicalFolders.map((f) => (
+                    <TouchableOpacity
+                      key={f.id}
+                      style={[
+                        styles.splitGroupRow,
+                        { backgroundColor: selectedMedicalFolderId === f.id ? (isDarkMode ? "rgba(0,122,255,0.2)" : "rgba(0,122,255,0.15)") : bg },
+                      ]}
+                      onPress={() => setSelectedMedicalFolderId(f.id)}
+                    >
+                      <Text style={[styles.splitGroupName, { color: textPrimary }]}>{f.patientName}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <Text style={[styles.splitModalLabel, { color: textSecondary }]}>Items to add</Text>
+                {detailReceipt?.items && medicalSuggestions?.allItemIds && medicalSuggestions.allItemIds.length > 0 ? (
+                  <ScrollView style={{ maxHeight: 160 }} showsVerticalScrollIndicator={false}>
+                    {detailReceipt.items
+                      .filter((it) => it.id && medicalSuggestions!.allItemIds.includes(it.id))
+                      .map((it) => (
+                        <TouchableOpacity
+                          key={it.id}
+                          style={[styles.medicalItemRow, { backgroundColor: bg }]}
+                          onPress={() => {
+                            if (!it.id) return;
+                            setSelectedMedicalItemIds((prev) =>
+                              prev.includes(it.id!)
+                                ? prev.filter((id) => id !== it.id)
+                                : [...prev, it.id!]
+                            );
+                          }}
+                        >
+                          {selectedMedicalItemIds.includes(it.id!) ? (
+                            <Check size={20} color={IOS_BLUE} />
+                          ) : (
+                            <Circle size={20} color={textSecondary} />
+                          )}
+                          <Text style={[styles.medicalItemName, { color: textPrimary }]} numberOfLines={1}>
+                            {it.name ?? it.rawName ?? "Item"}
+                          </Text>
+                          <Text style={[styles.medicalItemPrice, { color: textSecondary }]}>
+                            ${typeof it.totalPrice === "number" ? it.totalPrice.toFixed(2) : "0.00"}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                  </ScrollView>
+                ) : (
+                  <Text style={[styles.splitModalHint, { color: textSecondary }]}>
+                    {medicalSuggestions?.rxItemIds?.length ? "Prescription-like items pre-selected." : "All items will be added."}
+                  </Text>
+                )}
+                <TouchableOpacity
+                  style={[styles.splitConfirmBtn, { backgroundColor: IOS_BLUE }]}
+                  disabled={!selectedMedicalFolderId || addToMedicalLoading}
+                  onPress={async () => {
+                    if (!detailReceipt?.id || !selectedMedicalFolderId) return;
+                    setAddToMedicalLoading(true);
+                    try {
+                      const result = await addReceiptToMedical(
+                        detailReceipt.id,
+                        selectedMedicalFolderId,
+                        selectedMedicalItemIds.length > 0 ? selectedMedicalItemIds : medicalSuggestions?.allItemIds ?? [],
+                        authToken
+                      );
+                      Alert.alert("Done", `Added ${result.addedCount} item(s) to ${result.patientName}.`);
+                      setAddToMedicalModal(false);
+                      setDetailReceipt(null);
+                    } catch (e) {
+                      Alert.alert("Error", e instanceof Error ? e.message : "Failed to add");
+                    } finally {
+                      setAddToMedicalLoading(false);
+                    }
+                  }}
+                >
+                  {addToMedicalLoading ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <Text style={styles.splitConfirmBtnText}>Add to folder</Text>
+                  )}
+                </TouchableOpacity>
+              </>
             )}
           </View>
         </View>
@@ -589,6 +1080,10 @@ const styles = StyleSheet.create({
   },
   splitBtnText: { fontSize: 13, fontWeight: "600", color: IOS_BLUE },
   amount: { fontSize: 15, fontWeight: "700", color: IOS_BLUE, paddingHorizontal: 10, paddingBottom: 10 },
+  sectionHeaderWrap: { marginTop: 8, marginBottom: 4, paddingHorizontal: 4 },
+  sectionHeaderTitle: { fontSize: 18, fontWeight: "700" },
+  sectionHeaderSub: { fontSize: 13, marginTop: 2 },
+  uploadedBy: { fontSize: 12, paddingHorizontal: 10, paddingBottom: 10 },
   splitModalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -685,8 +1180,11 @@ const styles = StyleSheet.create({
   },
   detailDataSectionTitle: { fontSize: 12, fontWeight: "600", marginBottom: 12, letterSpacing: 0.5 },
   detailMeta: { marginBottom: 16 },
-  detailDate: { fontSize: 14, marginBottom: 4 },
+  detailUploadedBy: { fontSize: 13, marginBottom: 8 },
+  detailDate: { fontSize: 14, marginBottom: 2 },
+  detailDateHint: { fontSize: 11, opacity: 0.8 },
   detailTotal: { fontSize: 22, fontWeight: "800" },
+  dateEditInput: { borderRadius: 10, padding: 14, fontSize: 16 },
   detailItems: { marginTop: 8 },
   detailItemsTitle: { fontSize: 16, fontWeight: "700", marginBottom: 10 },
   detailItemRow: {
@@ -698,6 +1196,9 @@ const styles = StyleSheet.create({
   },
   detailItemName: { fontSize: 15, flex: 1, marginRight: 12 },
   detailItemPrice: { fontSize: 15, fontWeight: "600" },
+  categoryChip: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  categoryChipText: { fontSize: 12 },
+  subcategoryText: { fontSize: 11, flex: 1 },
   approveBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -708,4 +1209,26 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   approveBtnText: { color: "#FFF", fontSize: 16, fontWeight: "600" },
+  addToMedicalBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginTop: 12,
+    borderWidth: 1.5,
+  },
+  addToMedicalBtnText: { fontSize: 16, fontWeight: "600" },
+  medicalItemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    marginBottom: 6,
+    gap: 10,
+  },
+  medicalItemName: { flex: 1, fontSize: 14 },
+  medicalItemPrice: { fontSize: 14 },
 });

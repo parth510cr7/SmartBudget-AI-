@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert } from "react-native";
-import { useRouter, useFocusEffect } from "expo-router";
+import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Store, Trash2, Info } from "lucide-react-native";
 import { getTransactions, deleteTransaction, getReceiptDebug } from "../../src/api/client";
 import { useStore } from "../../src/store/useStore";
@@ -66,6 +66,8 @@ function firstCategory(items: { category: string }[] | undefined): string {
 
 export default function ReceiptsScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ store?: string }>();
+  const storeFilter = typeof params.store === "string" ? params.store.trim() : "";
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
   const { bg, glass, textPrimary, textSecondary } = getTheme(isDarkMode);
   const authToken = useStore((s) => (s.user as { idToken?: string } | null)?.idToken ?? null);
@@ -114,7 +116,24 @@ export default function ReceiptsScreen() {
       });
       getTransactions(authToken)
         .then((data) => {
-          const list = data ?? [];
+          const raw = Array.isArray(data) ? data : [];
+          const list: TxRow[] = raw.map((r: Record<string, unknown>) => {
+            const dateVal = r.date ?? r.createdAt;
+            const dateStr =
+              typeof dateVal === "string"
+                ? dateVal
+                : dateVal instanceof Date
+                  ? dateVal.toISOString()
+                  : new Date().toISOString();
+            return {
+              id: String(r.id ?? ""),
+              date: dateStr,
+              total: typeof r.total === "number" ? r.total : 0,
+              imageUrl: (r.imageUrl as string | null) ?? null,
+              store: (r.store as { name: string }) ?? { name: "Store" },
+              items: r.items as { category: string }[] | undefined,
+            };
+          });
           saveLocalTransactions(list);
           setTransactions(list);
           useStore.getState().setTransactions(list);
@@ -127,24 +146,32 @@ export default function ReceiptsScreen() {
     }, [authToken, refreshKey])
   );
 
-  const monthYearOptions = useMemo(() => getMonthYearOptions(transactions), [transactions]);
+  const filteredTransactions = useMemo(() => {
+    if (!storeFilter) return transactions;
+    const name = storeFilter.toLowerCase();
+    return transactions.filter((t) => (t.store?.name ?? "").toLowerCase() === name);
+  }, [transactions, storeFilter]);
+
+  const monthYearOptions = useMemo(() => getMonthYearOptions(filteredTransactions), [filteredTransactions]);
 
   /** When a specific month is selected, list MUST only show receipts from that month. Compare transaction date (YYYY-MM) to selectedMonthYear. */
   const filteredAndSorted = useMemo(() => {
-    let list = transactions;
+    let list = filteredTransactions;
     if (selectedMonthYear !== "all") {
-      list = transactions.filter((r) => {
+      list = filteredTransactions.filter((r) => {
         const txKey = getMonthYearKey(r.date);
         return txKey === selectedMonthYear;
       });
     }
     return [...list].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [transactions, selectedMonthYear]);
+  }, [filteredTransactions, selectedMonthYear]);
 
   return (
     <View style={[styles.container, { backgroundColor: bg }]}>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={[styles.header, { color: textPrimary }]}>Transaction History</Text>
+        <Text style={[styles.header, { color: textPrimary }]}>
+          {storeFilter ? `Receipts · ${storeFilter}` : "Transaction History"}
+        </Text>
 
         {lastParsed && (lastParsed.storeName ?? lastParsed.chosenTotal != null) && (
           <TouchableOpacity
@@ -194,7 +221,9 @@ export default function ReceiptsScreen() {
           {filteredAndSorted.length === 0 ? (
             <View style={styles.emptyStateWrap}>
               <Text style={[styles.emptyStateText, { color: textSecondary }]}>
-                {transactions.length === 0 ? "No Data" : "No receipts found for this month."}
+                {filteredTransactions.length === 0
+                  ? (storeFilter ? `No receipts for "${storeFilter}".` : "No Data")
+                  : "No receipts found for this month."}
               </Text>
             </View>
           ) : (

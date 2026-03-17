@@ -13,6 +13,13 @@ export type ReceiptCategory =
   | "Electronics"
   | "Dining"
   | "Gas"
+  | "Transportation"
+  | "Banking"
+  | "Clothing"
+  | "Subscriptions"
+  | "Entertainment"
+  | "Education"
+  | "Gifts & Donations"
   | "Other";
 
 /** Store name (lowercase) or keyword -> category. Keys with hyphens or spaces are quoted to avoid syntax errors. */
@@ -95,6 +102,73 @@ const STORE_TO_CATEGORY: Record<string, ReceiptCategory> = {
   amazon: "Other",
   "7-eleven": "Other",
   "seven eleven": "Other",
+  // Transportation
+  uber: "Transportation",
+  lyft: "Transportation",
+  "uber eats": "Dining",
+  "doordash": "Dining",
+  "grubhub": "Dining",
+  "lyft ride": "Transportation",
+  "parking": "Transportation",
+  "transit": "Transportation",
+  "metro": "Transportation",
+  "bus pass": "Transportation",
+  "train": "Transportation",
+  "airline": "Transportation",
+  "rental car": "Transportation",
+  "hertz": "Transportation",
+  "enterprise": "Transportation",
+  "toll": "Transportation",
+  // Banking / Finance
+  "bank fee": "Banking",
+  "atm": "Banking",
+  "wire transfer": "Banking",
+  "interest": "Banking",
+  "loan payment": "Banking",
+  "credit card": "Banking",
+  "insurance": "Banking",
+  // Clothing / Apparel
+  "nike": "Clothing",
+  "adidas": "Clothing",
+  "old navy": "Clothing",
+  "gap": "Clothing",
+  "h&m": "Clothing",
+  "hm": "Clothing",
+  "zara": "Clothing",
+  "uniqlo": "Clothing",
+  "ross": "Clothing",
+  "tj maxx": "Clothing",
+  "marshalls": "Clothing",
+  "nordstrom": "Clothing",
+  "macys": "Clothing",
+  "kohls": "Clothing",
+  // Subscriptions
+  "netflix": "Subscriptions",
+  "spotify": "Subscriptions",
+  "amazon prime": "Subscriptions",
+  "apple music": "Subscriptions",
+  "hulu": "Subscriptions",
+  "disney": "Subscriptions",
+  "youtube premium": "Subscriptions",
+  "subscription": "Subscriptions",
+  // Entertainment
+  "movie": "Entertainment",
+  "cinema": "Entertainment",
+  "concert": "Entertainment",
+  "theme park": "Entertainment",
+  "gym": "Entertainment",
+  "fitness": "Entertainment",
+  // Education
+  "tuition": "Education",
+  "books": "Education",
+  "school": "Education",
+  "course": "Education",
+  "udemy": "Education",
+  "coursera": "Education",
+  // Gifts & Donations
+  "donation": "Gifts & Donations",
+  "charity": "Gifts & Donations",
+  "gift": "Gifts & Donations",
 };
 
 /**

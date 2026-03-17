@@ -103,6 +103,33 @@ export async function getTransactions(idToken: string | null) {
 
 export type StoreRow = { name: string; visits: number; totalSpent: number };
 
+/** My stores: id, name, address — for editing address (Maps). */
+export type MyStoreRow = { id: string; name: string; address: string | null };
+export async function getMyStores(idToken: string | null): Promise<MyStoreRow[]> {
+  const res = await fetch(`${getBaseURL()}/api/stores`, { method: "GET", headers: authHeaders(idToken) });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to fetch stores");
+  }
+  return res.json();
+}
+export async function updateStoreAddress(
+  idToken: string | null,
+  storeId: string,
+  address: string | null
+): Promise<MyStoreRow> {
+  const res = await fetch(`${getBaseURL()}/api/stores/${encodeURIComponent(storeId)}`, {
+    method: "PATCH",
+    headers: authHeaders(idToken),
+    body: JSON.stringify({ address }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to update store");
+  }
+  return res.json();
+}
+
 export async function getStores(idToken: string | null): Promise<StoreRow[]> {
   const res = await fetch(`${baseURL}/api/transactions/stores`, {
     method: "GET",
@@ -224,6 +251,25 @@ export async function getReceipts(idToken: string | null, search?: string) {
   return res.json();
 }
 
+/** Fetch receipt image with auth and return as data URI so Image can display it (backend image endpoint requires auth). */
+export async function getReceiptImageDataUri(
+  idToken: string | null,
+  receiptId: string
+): Promise<string | null> {
+  try {
+    const res = await fetch(`${getBaseURL()}/api/receipts/${encodeURIComponent(receiptId)}/image`, {
+      method: "GET",
+      headers: { ...authHeaders(idToken), Accept: "application/json" },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { image?: string };
+    const base64 = typeof data?.image === "string" ? data.image : null;
+    return base64 ? `data:image/jpeg;base64,${base64}` : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Debug: last receipt parsed by the backend (store, total, items). Requires auth. */
 export async function getReceiptDebug(idToken: string | null): Promise<{
   storeName?: string;
@@ -246,8 +292,20 @@ export async function getReceiptDebug(idToken: string | null): Promise<{
 /** Native Intelligence: when local OCR has verified store + total, send this to use Cloud only for line items. */
 export type LocalExtract = { storeName: string; total: number; date?: string };
 
-/** Native Intelligence: fully processed on-device; no image sent. Minimal Cloud payload. */
-export type FromLocalPayload = { storeName: string; total: number; date?: string; category?: string };
+/** Native Intelligence: fully processed on-device; optional image stored for Library display. */
+export type ReceiptVisibilityType = "personal" | "household";
+export type FromLocalPayload = {
+  storeName: string;
+  total: number;
+  date?: string;
+  category?: string;
+  visibilityType?: ReceiptVisibilityType;
+  householdId?: string;
+  /** Base64 image so the receipt shows in Library (optional). */
+  image?: string;
+  /** Store address for Basket "open in Maps" (optional). */
+  storeAddress?: string;
+};
 
 const RECEIPT_PROCESS_TIMEOUT_MS = 60000;
 
@@ -255,12 +313,17 @@ const RECEIPT_PROCESS_TIMEOUT_MS = 60000;
 export async function postReceiptFromProcessText(
   idToken: string | null,
   rawText: string,
-  base64Image?: string | null
+  base64Image?: string | null,
+  opts?: { visibilityType?: ReceiptVisibilityType; householdId?: string }
 ): Promise<unknown> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), RECEIPT_PROCESS_TIMEOUT_MS);
-  const body: { rawText: string; image?: string } = { rawText: rawText.trim() };
+  const body: { rawText: string; image?: string; visibilityType?: ReceiptVisibilityType; householdId?: string } = {
+    rawText: rawText.trim(),
+  };
   if (base64Image && base64Image.length > 0) body.image = base64Image;
+  if (opts?.visibilityType) body.visibilityType = opts.visibilityType;
+  if (opts?.householdId) body.householdId = opts.householdId;
   try {
     const res = await fetch(`${getBaseURL()}/api/receipts/process-text`, {
       method: "POST",
@@ -304,15 +367,31 @@ export async function postReceiptFromBase64(
   base64: string,
   idToken: string | null,
   imageUrl?: string | null,
-  localExtract?: LocalExtract | null
+  localExtract?: LocalExtract | null,
+  coords?: { lat: number; lng: number } | null,
+  opts?: { visibilityType?: ReceiptVisibilityType; householdId?: string }
 ) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const body: { image: string; imageUrl?: string; localExtract?: LocalExtract } = { image: base64 };
+    const body: {
+      image: string;
+      imageUrl?: string;
+      localExtract?: LocalExtract;
+      lat?: number;
+      lng?: number;
+      visibilityType?: ReceiptVisibilityType;
+      householdId?: string;
+    } = { image: base64 };
     if (imageUrl != null && typeof imageUrl === "string") body.imageUrl = imageUrl;
     if (localExtract && typeof localExtract.storeName === "string" && typeof localExtract.total === "number")
       body.localExtract = localExtract;
+    if (coords && Number.isFinite(coords.lat) && Number.isFinite(coords.lng)) {
+      body.lat = coords.lat;
+      body.lng = coords.lng;
+    }
+    if (opts?.visibilityType) body.visibilityType = opts.visibilityType;
+    if (opts?.householdId) body.householdId = opts.householdId;
     const res = await fetch(`${getBaseURL()}/api/receipts/from-base64`, {
       method: "POST",
       headers: authHeaders(idToken),
@@ -329,6 +408,150 @@ export async function postReceiptFromBase64(
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+// ---------------------------
+// Household (shared receipts)
+// ---------------------------
+
+export type HouseholdMeResponse = {
+  household: null | { id: string; name: string; ownerUserId: string; maxMembers: number; role: "owner" | "member" };
+};
+
+export async function getMyHousehold(idToken: string | null): Promise<HouseholdMeResponse> {
+  const res = await fetch(`${getBaseURL()}/api/household/me`, {
+    method: "GET",
+    headers: authHeaders(idToken),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to load household");
+  }
+  return res.json();
+}
+
+export async function createHousehold(idToken: string | null, name: string): Promise<{ household: { id: string; name: string } }> {
+  const res = await fetch(`${getBaseURL()}/api/household`, {
+    method: "POST",
+    headers: authHeaders(idToken),
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to create household");
+  }
+  return res.json();
+}
+
+export async function createHouseholdInvite(idToken: string | null): Promise<{ token: string; inviteUrl: string; expiresAt: string }> {
+  const res = await fetch(`${getBaseURL()}/api/household/invite`, {
+    method: "POST",
+    headers: authHeaders(idToken),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to create invite");
+  }
+  return res.json();
+}
+
+export async function joinHousehold(idToken: string | null, token: string): Promise<{ message: string; householdId: string }> {
+  const res = await fetch(`${getBaseURL()}/api/household/join/${encodeURIComponent(token)}`, {
+    method: "POST",
+    headers: authHeaders(idToken),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to join household");
+  }
+  return res.json();
+}
+
+export async function leaveHousehold(idToken: string | null): Promise<{ message: string }> {
+  const res = await fetch(`${getBaseURL()}/api/household/leave`, {
+    method: "POST",
+    headers: authHeaders(idToken),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to leave household");
+  }
+  return res.json();
+}
+
+export async function removeHouseholdMember(idToken: string | null, userId: string): Promise<{ message: string }> {
+  const res = await fetch(`${getBaseURL()}/api/household/members/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+    headers: authHeaders(idToken),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to remove member");
+  }
+  return res.json();
+}
+
+export type HouseholdMembersResponse = {
+  household: null | { id: string; name: string; ownerUserId: string; maxMembers: number };
+  members: { id: string; userId: string; role: "owner" | "member"; joinedAt: string; name: string; email: string }[];
+};
+
+export async function getHouseholdMembers(idToken: string | null): Promise<HouseholdMembersResponse> {
+  const res = await fetch(`${getBaseURL()}/api/household/members`, {
+    method: "GET",
+    headers: authHeaders(idToken),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to load members");
+  }
+  return res.json();
+}
+
+export type HouseholdDashboardResponse = {
+  household: null | { id: string; name: string; ownerUserId: string; maxMembers: number };
+  totals: { totalSpend: number };
+  categoryTotals: { category: string; total: number }[];
+  storeTotals: { storeId: string; storeName: string; total: number }[];
+  recentReceipts: { id: string; date: string; total: number; store: { id: string; name: string }; uploadedBy: { userId: string; name: string } }[];
+};
+
+export async function getHouseholdDashboard(idToken: string | null): Promise<HouseholdDashboardResponse> {
+  const res = await fetch(`${getBaseURL()}/api/household/dashboard`, {
+    method: "GET",
+    headers: authHeaders(idToken),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to load dashboard");
+  }
+  return res.json();
+}
+
+export type HouseholdReceiptRow = {
+  id: string;
+  date: string;
+  total: number;
+  status?: string;
+  store: { id: string; name: string };
+  items?: { id?: string; name?: string; rawName?: string; totalPrice?: number; category?: string; subcategory?: string | null }[];
+  uploadedBy: { userId: string; name: string };
+  imageUrl: string | null;
+};
+
+export async function getHouseholdReceipts(idToken: string | null, limit?: number): Promise<HouseholdReceiptRow[]> {
+  const url = new URL(`${getBaseURL()}/api/household/receipts`);
+  if (typeof limit === "number" && limit > 0) url.searchParams.set("limit", String(limit));
+  const res = await fetch(url.toString(), {
+    method: "GET",
+    headers: authHeaders(idToken),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to load household receipts");
+  }
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
 }
 
 export async function postDemoSeed(idToken: string | null) {
@@ -579,6 +802,9 @@ export type BasketInsightsResponse = {
     storeAddress?: string | null;
     storeArea?: string | null;
     fallbackMessage?: string | null;
+    whyNoRecommendation?: string | null;
+    itemsMatchedCount?: number;
+    itemsTotalCount?: number;
   };
   bestTotalStore: {
     storeName: string;
@@ -586,7 +812,14 @@ export type BasketInsightsResponse = {
     storeAddress?: string | null;
     storeArea?: string | null;
   } | null;
-  yourHistory: { itemName: string; storeName: string; unitPrice: number; unit?: string }[];
+  yourHistory: {
+    itemName: string;
+    matchedReceiptItemName?: string | null;
+    storeName: string;
+    unitPrice: number;
+    unit?: string;
+  }[];
+  receiptCount?: number;
   groupPrices: Array<{
     id: string;
     canonicalItemName?: string;
@@ -963,6 +1196,23 @@ export async function settlePayment(
 }
 
 /** Mark a receipt as verified (expedite pending review). */
+export async function updateReceiptDate(
+  receiptId: string,
+  date: string,
+  idToken: string | null
+): Promise<{ id: string; date: string; [k: string]: unknown }> {
+  const res = await fetch(`${getBaseURL()}/api/receipts/${encodeURIComponent(receiptId)}`, {
+    method: "PATCH",
+    headers: authHeaders(idToken),
+    body: JSON.stringify({ date }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error ?? "Failed to update date");
+  }
+  return res.json();
+}
+
 export async function approveReceipt(receiptId: string, idToken: string | null): Promise<unknown> {
   const res = await fetch(`${getBaseURL()}/api/receipts/${receiptId}/approve`, {
     method: "PATCH",
@@ -973,6 +1223,69 @@ export async function approveReceipt(receiptId: string, idToken: string | null):
     throw new Error(
       (errorData as { error?: string }).error || "Failed to approve receipt"
     );
+  }
+  return res.json();
+}
+
+/** Suggest which receipt items look like Rx/drugs for "Add to medical" flow. */
+export async function getReceiptMedicalSuggestions(
+  receiptId: string,
+  idToken: string | null
+): Promise<{
+  receiptId: string;
+  storeName: string | null;
+  isPharmacyLike: boolean;
+  rxItemIds: string[];
+  allItemIds: string[];
+}> {
+  const res = await fetch(`${getBaseURL()}/api/receipts/${encodeURIComponent(receiptId)}/medical-suggestions`, {
+    method: "GET",
+    headers: authHeaders(idToken),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error ?? "Failed to get suggestions");
+  }
+  return res.json();
+}
+
+/** Add selected receipt items to a medical folder (patient). */
+export async function addReceiptToMedical(
+  receiptId: string,
+  folderId: string,
+  itemIds: string[],
+  idToken: string | null
+): Promise<{ success: boolean; folderId: string; patientName: string; addedCount: number }> {
+  const res = await fetch(`${getBaseURL()}/api/receipts/${encodeURIComponent(receiptId)}/add-to-medical`, {
+    method: "POST",
+    headers: authHeaders(idToken),
+    body: JSON.stringify({ folderId, itemIds }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error ?? "Failed to add to medical");
+  }
+  return res.json();
+}
+
+/** Update a receipt line item (e.g. category, subcategory for item-level mapping). */
+export async function updateReceiptItem(
+  receiptId: string,
+  itemId: string,
+  payload: { category?: string; subcategory?: string | null; name?: string; rawName?: string },
+  idToken: string | null
+): Promise<{ id: string; name: string; rawName: string; category: string; subcategory?: string | null; totalPrice: number; [k: string]: unknown }> {
+  const res = await fetch(
+    `${getBaseURL()}/api/receipts/${encodeURIComponent(receiptId)}/items/${encodeURIComponent(itemId)}`,
+    {
+      method: "PATCH",
+      headers: authHeaders(idToken),
+      body: JSON.stringify(payload),
+    }
+  );
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error ?? "Failed to update item");
   }
   return res.json();
 }

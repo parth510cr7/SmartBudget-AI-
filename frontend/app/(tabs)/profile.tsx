@@ -205,6 +205,11 @@ export default function ProfileScreen() {
     setLoadingModel(true);
     setDownloadError(null);
     try {
+      const exists = await isModelDownloaded();
+      if (!exists) {
+        setDownloadError("Model file not found. Re-download and try again.");
+        return;
+      }
       const uri = getModelFileUri();
       const ok = await initOnDeviceLLM(uri, (p) => setDownloadProgress(p));
       setLlmReady(ok);

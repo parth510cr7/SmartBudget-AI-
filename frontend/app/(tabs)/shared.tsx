@@ -15,7 +15,7 @@ import {
 import * as Clipboard from "expo-clipboard";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, useFocusEffect } from "expo-router";
-import { Users, Plus, X, Trash2, Link, Contact, UserPlus } from "lucide-react-native";
+import { Users, Plus, X, Trash2, Link, Contact, UserPlus, Home } from "lucide-react-native";
 import { getGroups, createGroup, deleteGroup, createGroupInviteLink, type GroupRow } from "../../src/api/client";
 import { useStore } from "../../src/store/useStore";
 import { getTheme, IOS_BLUE, SPACING, RADIUS } from "../../src/theme";
@@ -133,6 +133,20 @@ export default function SharedTabScreen() {
           <Text style={styles.createBtnText}>Create New Group</Text>
         </TouchableOpacity>
       </View>
+
+      <TouchableOpacity
+        style={[styles.householdCard, { backgroundColor: glass }]}
+        onPress={() => router.push("/household")}
+        activeOpacity={0.85}
+      >
+        <Home size={22} color={IOS_BLUE} />
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.householdTitle, { color: textPrimary }]}>Household</Text>
+          <Text style={[styles.householdSub, { color: textSecondary }]} numberOfLines={2}>
+            Up to 5 people under one roof. Each receipt can be saved as Personal or Household.
+          </Text>
+        </View>
+      </TouchableOpacity>
 
       {error ? (
         <View style={styles.errorBlock}>
@@ -351,6 +365,19 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.button,
   },
   createBtnText: { color: "#FFF", fontSize: 16, fontWeight: "600" },
+  householdCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: SPACING.cardPadding,
+    borderRadius: RADIUS.card,
+    marginHorizontal: SPACING.pageHorizontal,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.3)",
+  },
+  householdTitle: { fontSize: 17, fontWeight: "800" },
+  householdSub: { fontSize: 13, marginTop: 2, lineHeight: 18 },
   listContent: { paddingHorizontal: SPACING.pageHorizontal, paddingBottom: 120 },
   groupCard: {
     flexDirection: "row",

@@ -45,7 +45,7 @@ export default function StoresScreen() {
                 </View>
                 <TouchableOpacity
                   style={styles.viewReceiptsBtn}
-                  onPress={() => router.push("/(tabs)/receipts")}
+                  onPress={() => router.push({ pathname: "/(tabs)/receipts", params: { store: s.name } })}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.viewReceiptsText}>View Receipts</Text>

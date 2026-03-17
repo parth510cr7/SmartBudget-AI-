@@ -6,7 +6,13 @@ import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
 import { X, ImageUp } from "lucide-react-native";
-import { postReceiptFromBase64, postReceiptFromLocal, postReceiptFromProcessText } from "../../src/api/client";
+import {
+  postReceiptFromBase64,
+  postReceiptFromLocal,
+  postReceiptFromProcessText,
+  getMyHousehold,
+  type ReceiptVisibilityType,
+} from "../../src/api/client";
 import { useStore } from "../../src/store/useStore";
 import { getRawTextFromImageWithMeta } from "../../src/utils/ocr";
 import { parseReceiptText } from "../../src/utils/localParser";
@@ -53,6 +59,8 @@ export default function ScannerModal() {
   const [loadingPhrase, setLoadingPhrase] = useState(LOADING_PHRASES[0]);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [household, setHousehold] = useState<{ id: string; name: string } | null>(null);
+  const [saveTarget, setSaveTarget] = useState<ReceiptVisibilityType>("personal");
   const cameraRef = useRef<CameraView>(null);
   const authToken = useStore((s) => (s.user as { idToken?: string } | null)?.idToken ?? null);
 
@@ -71,6 +79,23 @@ export default function ScannerModal() {
       MediaLibrary.requestPermissionsAsync().catch(() => {});
     }
   }, [mediaLibraryPermission]);
+
+  useEffect(() => {
+    getMyHousehold(authToken ?? null)
+      .then((r) => {
+        const h = r.household;
+        if (h?.id) {
+          setHousehold({ id: h.id, name: h.name });
+        } else {
+          setHousehold(null);
+          setSaveTarget("personal");
+        }
+      })
+      .catch(() => {
+        setHousehold(null);
+        setSaveTarget("personal");
+      });
+  }, [authToken]);
 
   useEffect(() => {
     if (status === "uploading") setLoadingPhrase(getRandomLoadingPhrase());
@@ -171,6 +196,9 @@ export default function ScannerModal() {
             total: pipelineResult.total,
             date: pipelineResult.date,
             category,
+            visibilityType: saveTarget,
+            householdId: saveTarget === "household" ? household?.id : undefined,
+            image: base64 ?? undefined,
           });
           useStore.getState().setExpensePrefill({ description: pipelineResult.storeName.trim(), amount: pipelineResult.total, needsReview: false });
           useStore.getState().triggerDashboardRefresh();
@@ -178,7 +206,12 @@ export default function ScannerModal() {
           return;
         }
         try {
-          const res = await postReceiptFromProcessText(authToken, rawText, base64) as { store?: { name?: string }; total?: number; needsReview?: boolean };
+          const res = await postReceiptFromProcessText(
+            authToken,
+            rawText,
+            base64,
+            { visibilityType: saveTarget, householdId: saveTarget === "household" ? household?.id : undefined }
+          ) as { store?: { name?: string }; total?: number; needsReview?: boolean };
           const desc = res?.store?.name?.trim() || "Receipt";
           const amt = typeof res?.total === "number" && res.total > 0 ? res.total : 0;
           if (amt > 0) useStore.getState().setExpensePrefill({ description: desc, amount: amt, needsReview: res?.needsReview });
@@ -196,6 +229,9 @@ export default function ScannerModal() {
             total: parsed.total,
             date: parsed.date,
             category,
+            visibilityType: saveTarget,
+            householdId: saveTarget === "household" ? household?.id : undefined,
+            image: base64 ?? undefined,
           });
           useStore.getState().setExpensePrefill({ description: parsed.storeName.trim(), amount: parsed.total, needsReview: false });
           useStore.getState().triggerDashboardRefresh();
@@ -205,7 +241,14 @@ export default function ScannerModal() {
       }
       if (__DEV__) console.log(`${OCR_LOG_PREFIX} cloud fallback triggered: yes`);
       setProcessingStatus("cloud");
-      const res = await postReceiptFromBase64(base64, authToken, imageUri ?? null, null) as { store?: { name?: string }; total?: number };
+      const res = await postReceiptFromBase64(
+        base64,
+        authToken,
+        imageUri ?? null,
+        null,
+        null,
+        { visibilityType: saveTarget, householdId: saveTarget === "household" ? household?.id : undefined }
+      ) as { store?: { name?: string }; total?: number };
       const desc = res?.store?.name?.trim() || "Receipt";
       const amt = typeof res?.total === "number" && res.total > 0 ? res.total : 0;
       if (amt > 0) useStore.getState().setExpensePrefill({ description: desc, amount: amt, needsReview: (res as { needsReview?: boolean })?.needsReview });
@@ -319,13 +362,19 @@ export default function ScannerModal() {
               total: pipelineResult.total,
               date: pipelineResult.date,
               category,
+              visibilityType: saveTarget,
+              householdId: saveTarget === "household" ? household?.id : undefined,
+              image: base64 ?? undefined,
             });
             useStore.getState().triggerDashboardRefresh();
             done = true;
           }
           if (!done) {
             try {
-              await postReceiptFromProcessText(authToken, rawText, base64);
+              await postReceiptFromProcessText(authToken, rawText, base64, {
+                visibilityType: saveTarget,
+                householdId: saveTarget === "household" ? household?.id : undefined,
+              });
               useStore.getState().triggerDashboardRefresh();
               done = true;
             } catch (_) {}
@@ -339,6 +388,9 @@ export default function ScannerModal() {
                 total: parsed.total,
                 date: parsed.date,
                 category,
+                visibilityType: saveTarget,
+                householdId: saveTarget === "household" ? household?.id : undefined,
+                image: base64 ?? undefined,
               });
               useStore.getState().triggerDashboardRefresh();
               done = true;
@@ -356,9 +408,15 @@ export default function ScannerModal() {
                 total: localExtract.total,
                 date: localExtract.date,
                 category,
+                visibilityType: saveTarget,
+                householdId: saveTarget === "household" ? household?.id : undefined,
+                image: base64 ?? undefined,
               });
             } else {
-              await postReceiptFromBase64(base64, authToken, asset.uri, null);
+              await postReceiptFromBase64(base64, authToken, asset.uri, null, null, {
+                visibilityType: saveTarget,
+                householdId: saveTarget === "household" ? household?.id : undefined,
+              });
             }
             useStore.getState().triggerDashboardRefresh();
           }
@@ -455,6 +513,26 @@ export default function ScannerModal() {
       <TouchableOpacity style={styles.closeBtn} onPress={() => router.back()}>
         <X size={28} color="#FFF" />
       </TouchableOpacity>
+      {household ? (
+        <View style={styles.saveTargetPill}>
+          <TouchableOpacity
+            style={[styles.saveTargetChip, saveTarget === "personal" && styles.saveTargetChipActive]}
+            onPress={() => setSaveTarget("personal")}
+            disabled={processing}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.saveTargetText, saveTarget === "personal" && styles.saveTargetTextActive]}>Personal</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.saveTargetChip, saveTarget === "household" && styles.saveTargetChipActive]}
+            onPress={() => setSaveTarget("household")}
+            disabled={processing}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.saveTargetText, saveTarget === "household" && styles.saveTargetTextActive]}>Household</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
       <View style={styles.bottomBar}>
         <TouchableOpacity
           style={styles.galleryBtn}
@@ -510,6 +588,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  saveTargetPill: {
+    position: "absolute",
+    top: 52,
+    left: 16,
+    flexDirection: "row",
+    backgroundColor: FROSTED_BG,
+    borderRadius: 999,
+    padding: 4,
+    gap: 6,
+  },
+  saveTargetChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  saveTargetChipActive: {
+    backgroundColor: IOS_BLUE,
+  },
+  saveTargetText: { color: "rgba(255,255,255,0.9)", fontSize: 13, fontWeight: "700" },
+  saveTargetTextActive: { color: "#FFF" },
   bottomBar: {
     position: "absolute",
     bottom: 40,
