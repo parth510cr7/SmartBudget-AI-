@@ -9,24 +9,36 @@ import {
   Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
+import Constants from "expo-constants";
 import { X } from "lucide-react-native";
 import * as AppleAuthentication from "expo-apple-authentication";
+import * as Crypto from "expo-crypto";
 import { useIdTokenAuthRequest } from "expo-auth-session/providers/google";
 import { useStore } from "../../src/store/useStore";
 import { getTheme } from "../../src/theme";
 import { authSync, type AuthSyncUser } from "../../src/api/client";
 import type { UserState } from "../../src/store/useStore";
+import { isFirebaseClientConfigured } from "../../src/auth/firebaseClient";
+import {
+  exchangeAppleSignInForFirebaseIdToken,
+  exchangeGoogleOAuthForFirebaseIdToken,
+} from "../../src/auth/exchangeOAuthForFirebaseIdToken";
 
-const APPLE_BLACK = "#000000";
-const GOOGLE_BORDER = "#DADCE0";
+/** Ignore empty strings so app.json "" does not block EXPO_PUBLIC_* from .env */
+function trimStr(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  const s = String(v).trim();
+  return s.length > 0 ? s : undefined;
+}
 
-/** Web and iOS Client IDs for useIdTokenAuthRequest. Set in app.json extra (googleWebClientId, googleIosClientId) or env EXPO_PUBLIC_GOOGLE_* */
+/** Web / iOS / Android OAuth client IDs: app.json `extra` OR `frontend/.env` EXPO_PUBLIC_GOOGLE_* (restart Expo with -c after edits). */
 function getGoogleClientIds(): { iosClientId?: string; androidClientId?: string; webClientId?: string } {
-  const extra = (typeof globalThis !== "undefined" && (globalThis as any).expo?.constants?.expoConfig?.extra) ?? {};
+  const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, unknown>;
   return {
-    iosClientId: extra.googleIosClientId ?? process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
-    androidClientId: extra.googleAndroidClientId ?? process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
-    webClientId: extra.googleWebClientId ?? process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+    iosClientId: trimStr(extra.googleIosClientId) ?? trimStr(process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID),
+    androidClientId:
+      trimStr(extra.googleAndroidClientId) ?? trimStr(process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID),
+    webClientId: trimStr(extra.googleWebClientId) ?? trimStr(process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID),
   };
 }
 
@@ -58,41 +70,56 @@ export default function LoginModal() {
     clientId: effectiveGoogleClientId || "placeholder-no-google-client-id",
   });
 
-  async function syncWithBackend(idToken: string) {
-    setLoading(true);
+  /** Persists Firebase ID token to backend and closes modal (caller manages `loading`). */
+  async function finalizeSignIn(firebaseIdToken: string) {
     try {
-      const { user: backendUser } = await authSync(idToken);
-      const user = backendUserToStoreUser(backendUser, idToken);
+      const { user: backendUser } = await authSync(firebaseIdToken);
+      const user = backendUserToStoreUser(backendUser, firebaseIdToken);
       setUser(user);
       router.back();
     } catch (e) {
       const message = e instanceof Error ? e.message : "Could not connect. Please try again.";
       Alert.alert("Sign-in failed", message);
-    } finally {
-      setLoading(false);
     }
   }
 
   async function handleAppleSignIn() {
     if (loading) return;
+    if (!isFirebaseClientConfigured()) {
+      Alert.alert(
+        "Firebase not configured",
+        "1) Fill every EXPO_PUBLIC_FIREBASE_* in frontend/.env (not only API key).\n2) npx expo start -c\n3) Firebase Console → Authentication → enable Apple & Google."
+      );
+      return;
+    }
     try {
+      const rawNonce = Crypto.randomUUID();
       const credential = await AppleAuthentication.signInAsync({
         requestedScopes: [
           AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
           AppleAuthentication.AppleAuthenticationScope.EMAIL,
         ],
+        nonce: rawNonce,
       });
       const token = credential.identityToken ?? null;
       if (!token) {
         Alert.alert("Sign-in cancelled", "Apple did not return an identity token.");
         return;
       }
-      await syncWithBackend(token);
+      setLoading(true);
+      try {
+        const firebaseIdToken = await exchangeAppleSignInForFirebaseIdToken(token, rawNonce);
+        await finalizeSignIn(firebaseIdToken);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Could not complete Firebase sign-in.";
+        Alert.alert("Sign-in failed", message);
+      } finally {
+        setLoading(false);
+      }
     } catch (e: any) {
       if (e?.code === "ERR_REQUEST_CANCELED") {
         return;
       }
-      setLoading(false);
       const message = e instanceof Error ? e.message : "Apple sign-in failed.";
       Alert.alert("Sign-in failed", message);
     }
@@ -104,7 +131,14 @@ export default function LoginModal() {
     if (!clientId || clientId.startsWith("placeholder-")) {
       Alert.alert(
         "Not configured",
-        "Google Sign-In requires a client ID. Add googleIosClientId or googleWebClientId to app.json extra, or set EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID."
+        "Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID (or EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID on iOS) in frontend/.env from Google Cloud Console → OAuth 2.0 Client IDs. Optionally set extra.googleWebClientId in app.json. Restart: npx expo start -c"
+      );
+      return;
+    }
+    if (!isFirebaseClientConfigured()) {
+      Alert.alert(
+        "Firebase not configured",
+        "1) Copy all EXPO_PUBLIC_FIREBASE_* values from Firebase Console → Project settings → Your apps (Web).\n2) Restart: npx expo start -c\n3) Console → Authentication → Sign-in method: enable Google and Apple; add Apple Services ID if needed.\n4) Google Cloud: OAuth client IDs must match EXPO_PUBLIC_GOOGLE_* in .env."
       );
       return;
     }
@@ -112,25 +146,25 @@ export default function LoginModal() {
     try {
       const result = await googlePromptAsync();
       if (result?.type !== "success") {
-        setLoading(false);
         if (result?.type === "dismiss" || result?.type === "cancel") return;
         Alert.alert("Sign-in failed", "Google sign-in was not successful.");
         return;
       }
+      const params = result.params as { id_token?: string; access_token?: string };
       const idToken =
-        (result.params as { id_token?: string })?.id_token ??
-        (result as any).authentication?.idToken ??
-        null;
+        params?.id_token ?? (result as { authentication?: { idToken?: string } }).authentication?.idToken ?? null;
       if (!idToken) {
-        setLoading(false);
         Alert.alert("Sign-in failed", "Google did not return an ID token.");
         return;
       }
-      await syncWithBackend(idToken);
+      const accessToken = params?.access_token ?? null;
+      const firebaseIdToken = await exchangeGoogleOAuthForFirebaseIdToken(idToken, accessToken);
+      await finalizeSignIn(firebaseIdToken);
     } catch (e) {
-      setLoading(false);
       const message = e instanceof Error ? e.message : "Google sign-in failed.";
       Alert.alert("Sign-in failed", message);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -210,7 +244,7 @@ const styles = StyleSheet.create({
   },
   loadingText: { marginTop: 16, fontSize: 16 },
   appleBtn: {
-    backgroundColor: APPLE_BLACK,
+    backgroundColor: "#000000",
     paddingVertical: 18,
     borderRadius: 14,
     alignItems: "center",

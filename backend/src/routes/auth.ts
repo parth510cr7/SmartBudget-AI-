@@ -24,8 +24,9 @@ function ensureFirebase(): boolean {
 
 /**
  * POST /auth/sync
- * Body: none. Expects Authorization: Bearer <idToken> (Firebase ID token from Apple/Google sign-in).
- * Verifies the token, upserts the user, returns the user object for the frontend store.
+ * Body: none. Expects Authorization: Bearer \<Firebase ID token\> from the client Firebase Auth
+ * session (`user.getIdToken()` after Sign in with Apple / Google via Firebase Auth).
+ * Verifies with Firebase Admin `verifyIdToken`, upserts the user, returns the user for the store.
  */
 router.post("/sync", async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;

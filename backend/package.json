@@ -12,6 +12,7 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
+    "db:test": "node scripts/test-db-connection.mjs",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

@@ -49,7 +49,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     return;
   }
 
-  // Dev bypass (non-production only): "Bearer dev-token" injects a mock user for local testing (no Firebase).
+  // Dev-only: explicit test user (no Firebase). Disabled in production above. Never use for real accounts.
   if (token === "dev-token") {
     prisma.user
       .upsert({
@@ -132,31 +132,8 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
         });
     })
     .catch((err: unknown) => {
-      console.warn("[auth] verifyIdToken failed", err instanceof Error ? err.message : String(err));
-      prisma.user
-        .upsert({
-          where: { firebaseId: "dev-bypass" },
-          create: {
-            firebaseId: "dev-bypass",
-            email: "dev@test.com",
-            name: "Dev User",
-            customCategories: [],
-          },
-          update: { name: "Dev User" },
-        })
-        .then((user) => {
-          authReq.auth = {
-            uid: user.firebaseId,
-            email: user.email ?? undefined,
-            decodedToken: {} as admin.auth.DecodedIdToken,
-          };
-          authReq.user = { id: user.id };
-          next();
-        })
-        .catch((err: unknown) => {
-        console.error("[auth] Fallback dev-bypass upsert failed", err instanceof Error ? err : err);
-        if (err && typeof err === "object") console.error("[auth] Prisma error details", JSON.stringify(err, null, 2));
-        next(err);
-      });
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[auth] verifyIdToken failed", msg);
+      res.status(401).json({ error: "Invalid or expired token" });
     });
 }

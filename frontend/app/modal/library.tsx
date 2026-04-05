@@ -239,10 +239,6 @@ export default function LibraryModal() {
   );
 
   useEffect(() => {
-    setDetailReceipt(null);
-  }, []);
-
-  useEffect(() => {
     if (!detailReceipt || !authToken) {
       setDetailImageUri(null);
       return;

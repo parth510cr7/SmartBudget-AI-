@@ -1,5 +1,7 @@
-/** Backend base URL: app.json extra.apiUrl > EXPO_PUBLIC_API_URL in .env > BASE_URL (physical device). Backend runs on port 8080. */
-const BASE_URL = "http://10.0.0.47:8080";
+import { Platform } from "react-native";
+
+/** Backend base URL: app.json extra.apiUrl > EXPO_PUBLIC_API_URL in .env > fallback (simulator/web). Use EXPO_PUBLIC_API_URL with your LAN IP for a physical device. Backend runs on port 8080. */
+const BASE_URL = "http://localhost:8080";
 
 function getBaseURL(): string {
   try {
@@ -38,6 +40,12 @@ function authHeaders(idToken: string | null): Record<string, string> {
     "Content-Type": "application/json",
     Authorization: `Bearer ${token}`,
   };
+}
+
+/** Bearer only (no Content-Type) — better for GET image / binary download. */
+function authBearerOnly(idToken: string | null): Record<string, string> {
+  const token = idToken && idToken.trim() ? idToken : DEV_TOKEN;
+  return { Authorization: `Bearer ${token}` };
 }
 
 export function getApiBase() {
@@ -251,22 +259,51 @@ export async function getReceipts(idToken: string | null, search?: string) {
   return res.json();
 }
 
-/** Fetch receipt image with auth and return as data URI so Image can display it (backend image endpoint requires auth). */
+/**
+ * Load receipt image for <Image source={{ uri }} />. Uses file download on native (avoids huge base64 data URIs);
+ * web keeps JSON+data-URI. Backend: GET /api/receipts/:id/image (JSON if Accept: application/json, else JPEG bytes).
+ */
 export async function getReceiptImageDataUri(
   idToken: string | null,
   receiptId: string
 ): Promise<string | null> {
-  try {
-    const res = await fetch(`${getBaseURL()}/api/receipts/${encodeURIComponent(receiptId)}/image`, {
+  const url = `${getBaseURL()}/api/receipts/${encodeURIComponent(receiptId)}/image`;
+  const headers = authBearerOnly(idToken);
+
+  async function loadJsonDataUri(): Promise<string | null> {
+    const res = await fetch(url, {
       method: "GET",
-      headers: { ...authHeaders(idToken), Accept: "application/json" },
+      headers: { ...headers, Accept: "application/json", "Content-Type": "application/json" },
     });
     if (!res.ok) return null;
     const data = (await res.json()) as { image?: string };
     const base64 = typeof data?.image === "string" ? data.image : null;
     return base64 ? `data:image/jpeg;base64,${base64}` : null;
+  }
+
+  if (Platform.OS === "web") {
+    try {
+      return await loadJsonDataUri();
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    // Native: download JPEG to cache (auth headers); avoids Hermes/data-URI size issues on large receipts.
+    const FileSystem = require("expo-file-system/legacy") as typeof import("expo-file-system/legacy");
+    const cacheDir = FileSystem.cacheDirectory;
+    if (!cacheDir) return loadJsonDataUri();
+    const fileUri = `${cacheDir}receipt-${receiptId}.jpg`;
+    const result = await FileSystem.downloadAsync(url, fileUri, { headers });
+    if (result.status !== 200) return loadJsonDataUri();
+    return result.uri;
   } catch {
-    return null;
+    try {
+      return await loadJsonDataUri();
+    } catch {
+      return null;
+    }
   }
 }
 

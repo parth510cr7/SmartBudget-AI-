@@ -22,7 +22,6 @@
     },
     "android": {
       "package": "com.parth510.smartbudgetai",
-      "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -43,7 +42,13 @@
     "plugins": [
       "expo-router",
       "expo-apple-authentication",
-      ["expo-build-properties", { "ios": { "deploymentTarget": "15.1" }, "android": { "minSdkVersion": 24 } }],
+      [
+        "expo-build-properties",
+        {
+          "ios": { "deploymentTarget": "15.1" },
+          "android": { "minSdkVersion": 24, "usesCleartextTraffic": true }
+        }
+      ],
       [
         "expo-camera",
         {
@@ -64,10 +69,7 @@
       "router": {},
       "eas": {
         "projectId": "dc606802-ca5e-483d-971d-146760b4b9ef"
-      },
-      "googleWebClientId": "",
-      "googleIosClientId": "",
-      "googleAndroidClientId": ""
+      }
     }
   }
 }
