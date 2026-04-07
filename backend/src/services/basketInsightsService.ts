@@ -1,6 +1,12 @@
 import { prisma } from "../lib/db";
 import { optimizeBasket } from "./optimizationService";
 import { getEssentialCategoriesForPriceTracking } from "../config/categories";
+import {
+  normalizeName,
+  matchBasketToReceiptName,
+  receiptLineMatchesBasketItem,
+} from "./basketMatcherEngine";
+import { getItemWhereForUserReceipts, getReceiptWhereForUser } from "./basketReceiptScope";
 
 const MULTI_STORE_SAVINGS_ABSOLUTE = Number(process.env.MULTI_STORE_SAVINGS_ABSOLUTE) || 10;
 const MULTI_STORE_SAVINGS_PERCENT = Number(process.env.MULTI_STORE_SAVINGS_PERCENT) || 5;
@@ -9,7 +15,7 @@ const MULTI_STORE_SAVINGS_PERCENT = Number(process.env.MULTI_STORE_SAVINGS_PERCE
 const COMMUNITY_RADIUS_KM = Number(process.env.COMMUNITY_RADIUS_KM) || 30;
 
 /** Minimum basket items required before we recommend a specific store (avoid thin data). */
-const MIN_BASKET_ITEMS_FOR_STORE = 2;
+const MIN_BASKET_ITEMS_FOR_STORE = 1;
 
 /** Haversine distance in km between two points. */
 function haversineKm(
@@ -30,25 +36,58 @@ function haversineKm(
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
-/** Minimum fraction of basket items that must have price data (0–1). */
-const MIN_COVERAGE_RATIO = 0.5;
+/** Minimum fraction of basket items that must have price data for a full (non-partial) recommendation (0–1). */
+const MIN_COVERAGE_RATIO = 0.33;
 const FALLBACK_MESSAGE = "Don't have best pick yet 🥶";
+
+// #region agent log
+function debugLog(hypothesisId: string, message: string, data: Record<string, unknown>) {
+  try {
+    const f = (globalThis as unknown as { fetch?: typeof fetch }).fetch;
+    if (typeof f !== "function") return;
+    f("http://127.0.0.1:7261/ingest/eb273f8c-3496-4ab0-bbc2-95ac1e39d959", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6bad93" },
+      body: JSON.stringify({
+        sessionId: "6bad93",
+        location: "basketInsightsService.ts",
+        runId: "baseline",
+        hypothesisId,
+        message,
+        data,
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+  } catch {
+    // ignore
+  }
+}
+// #endregion
 
 function buildWhyNoRecommendation(
   itemNames: string[],
   itemsMatched: number,
   hasEnoughItems: boolean,
   hasEnoughCoverage: boolean,
-  bestResult: unknown
+  bestResult: unknown,
+  hasReceiptLineHistory: boolean
 ): string {
   if (itemNames.length < MIN_BASKET_ITEMS_FOR_STORE)
-    return "Add at least 2 items to get a store recommendation.";
-  if (itemsMatched === 0)
-    return `We need prices from your receipts. Scan receipts with items like "${itemNames.slice(0, 3).join('", "')}", then try again.`;
+    return "Add at least one item to get a store recommendation.";
+  if (itemsMatched === 0) {
+    if (!hasReceiptLineHistory) {
+      return `We need prices from your receipts. Scan receipts with items like "${itemNames.slice(0, 3).join('", "')}", then try again.`;
+    }
+    return `We couldn't match these lines to your receipt history (${itemNames.slice(0, 3).join(", ")}…). Try wording closer to a past receipt, or shorter words like milk, eggs, bread.`;
+  }
   if (!hasEnoughCoverage)
-    return `We have prices for ${itemsMatched} of ${itemNames.length} items. Scan more receipts or use shorter names (e.g. milk, eggs).`;
-  if (!bestResult)
-    return "No single store has all these items in your history yet. Try fewer items or scan more receipts from one store.";
+    return `We have prices for ${itemsMatched} of ${itemNames.length} basket lines. Add more receipts or narrow names to match what you usually buy.`;
+  if (!bestResult) {
+    if (itemsMatched > 0 && hasReceiptLineHistory) {
+      return "Some items match your receipts, but no store in your history has enough of them priced together for a confident single-store trip. Try fewer items or more receipts from one store.";
+    }
+    return "No store in your history covers this full basket yet. Try fewer items or scan more receipts from one store.";
+  }
   return FALLBACK_MESSAGE;
 }
 
@@ -68,6 +107,12 @@ export interface BestStoreBlock {
   fallbackMessage?: string | null;
   /** When disabled: why we couldn't recommend (actionable message). */
   whyNoRecommendation?: string | null;
+  /** When enabled but partial: short hint (e.g. how many items priced at this store). */
+  partialNote?: string | null;
+  /** Human-readable evidence summary for the chosen store. */
+  evidenceSummary?: string | null;
+  /** strong = mostly high-confidence line matches; mixed / weak otherwise */
+  matchQuality?: "strong" | "mixed" | "weak";
   /** Number of basket items we have price data for. */
   itemsMatchedCount?: number;
   /** Total basket items. */
@@ -150,6 +195,10 @@ export interface BasketInsightsResponse {
   bestStore: BestStoreBlock;
   bestTotalStore: BestTotalStoreSection | null;
   yourHistory: YourHistoryEntry[];
+  /** Basket lines that matched at least one receipt line (same rules as coverage). */
+  matchedBasketLines?: string[];
+  /** Basket lines with no receipt match (refinement targets). */
+  unmatchedBasketLines?: string[];
   /** Number of receipts used for insights (for "Based on X receipts"). */
   receiptCount?: number;
   groupPrices: GroupPriceEntry[];
@@ -159,27 +208,44 @@ export interface BasketInsightsResponse {
   topSpendCategories: TopSpendCategory[];
 }
 
-function normalizeName(name: string): string {
-  return name.toLowerCase().trim().replace(/\s+/g, " ");
-}
-
-function stripSizeAndUnits(normalized: string): string {
-  return normalized
-    .replace(/\b\d*\.?\d+\s*(l|liter|litre|ml|g|kg|lb|oz|mg)\b/gi, " ")
-    .replace(/\b\d+%\s*/g, " ")
-    .replace(/\b(organic|whole|skim|2%|1%|fat\s*free|low\s*fat|large|medium|small|dozen|pack|ct|pk|ea)\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim() || normalized;
-}
-
 function itemMatchesBasket(normalizedItem: string, basketNorm: string[]): boolean {
   return basketNorm.some((b) => normalizedItem.includes(b) || b.includes(normalizedItem));
 }
 
+/** How many basket lines have at least one matching receipt item (per basket item, not distinct receipt rows). */
+function countBasketItemsWithReceiptMatch(
+  basketNorm: string[],
+  historicalItems: { name: string }[]
+): number {
+  let n = 0;
+  for (const b of basketNorm) {
+    const hit = historicalItems.some((it) => receiptLineMatchesBasketItem(b, it));
+    if (hit) n++;
+  }
+  return n;
+}
+
+function partitionBasketLinesByReceiptMatch(
+  itemNames: string[],
+  basketNorm: string[],
+  historicalItems: { name: string }[]
+): { matched: string[]; unmatched: string[] } {
+  const matched: string[] = [];
+  const unmatched: string[] = [];
+  for (let i = 0; i < itemNames.length; i++) {
+    const norm = basketNorm[i] ?? normalizeName(itemNames[i] ?? "");
+    const hit = historicalItems.some((it) => receiptLineMatchesBasketItem(norm, it));
+    if (hit) matched.push(itemNames[i]);
+    else unmatched.push(itemNames[i]);
+  }
+  return { matched, unmatched };
+}
+
 /** Top spending categories from user's receipt items (category -> sum totalPrice). */
 async function getTopSpendCategories(userId: string, limit: number): Promise<TopSpendCategory[]> {
+  const itemWhere = await getItemWhereForUserReceipts(userId);
   const items = await prisma.item.findMany({
-    where: { receipt: { userId } },
+    where: itemWhere,
     select: { category: true, totalPrice: true },
   });
   const byCategory = new Map<string, number>();
@@ -208,12 +274,15 @@ export async function getBasketInsights(
 
   const topSpendCategories = await getTopSpendCategories(userId, 6);
 
-  const receiptCountForEmpty = await prisma.receipt.count({ where: { userId } });
+  const receiptWhereForUser = await getReceiptWhereForUser(userId);
+  const receiptCountForEmpty = await prisma.receipt.count({ where: receiptWhereForUser });
   const emptyResponse: BasketInsightsResponse = {
     estimatedTotalKnownData: 0,
-    bestStore: { enabled: false, confidence: 0, fallbackMessage: FALLBACK_MESSAGE, whyNoRecommendation: "Add at least 2 items to get a store recommendation.", itemsTotalCount: 0, itemsMatchedCount: 0 },
+    bestStore: { enabled: false, confidence: 0, fallbackMessage: FALLBACK_MESSAGE, whyNoRecommendation: "Add at least one item to get a store recommendation.", itemsTotalCount: 0, itemsMatchedCount: 0 },
     bestTotalStore: null,
     yourHistory: [],
+    matchedBasketLines: [],
+    unmatchedBasketLines: [],
     receiptCount: receiptCountForEmpty,
     groupPrices: [],
     sharedFriendPrices: [],
@@ -229,6 +298,8 @@ export async function getBasketInsights(
     bestStore: { enabled: false, confidence: 0, fallbackMessage: FALLBACK_MESSAGE },
     bestTotalStore: null,
     yourHistory: [],
+    matchedBasketLines: [],
+    unmatchedBasketLines: [],
     groupPrices: [],
     sharedFriendPrices: [],
     nearbyCommunityAverage: null,
@@ -236,25 +307,34 @@ export async function getBasketInsights(
     topSpendCategories,
   };
 
-  // 2. Your history: from user's receipt items matching basket (substring + strip size/units)
+  // 2. Your history: from user's receipt items matching basket (own + household receipts)
+  const itemWhereScoped = await getItemWhereForUserReceipts(userId);
   const historicalItems = await prisma.item.findMany({
-    where: { receipt: { userId } },
+    where: itemWhereScoped,
     include: { receipt: { include: { store: true } } },
   });
+
+  // #region agent log
+  debugLog("H1", "historical items loaded", {
+    userIdPresent: Boolean(userId),
+    basketItemCount: itemNames.length,
+    historicalItemCount: historicalItems.length,
+    sampleReceiptCount: new Set(historicalItems.map((it) => it.receiptId)).size,
+  });
+  // #endregion
+
   const receiptIds = new Set(historicalItems.map((it) => it.receiptId));
   response.receiptCount = receiptIds.size;
+
+  const partition = partitionBasketLinesByReceiptMatch(itemNames, basketNorm, historicalItems);
+  response.matchedBasketLines = partition.matched;
+  response.unmatchedBasketLines = partition.unmatched;
+  const hasReceiptLineHistory = historicalItems.length > 0;
 
   const byProduct = new Map<string, { storeName: string; unitPrice: number; unit: string; matchedReceiptItemName: string }>();
   for (const it of historicalItems) {
     const key = normalizeName(it.name);
-    const coreKey = stripSizeAndUnits(key);
-    const matches = basketNorm.some(
-      (b) =>
-        key.includes(b) ||
-        b.includes(key) ||
-        coreKey.includes(stripSizeAndUnits(b)) ||
-        stripSizeAndUnits(b).includes(coreKey)
-    );
+    const matches = basketNorm.some((b) => receiptLineMatchesBasketItem(b, it));
     if (!matches) continue;
     const entry = {
       storeName: it.receipt.store.name,
@@ -281,10 +361,42 @@ export async function getBasketInsights(
   }
   response.estimatedTotalKnownData = Math.round(estimatedFromKnown * 100) / 100;
 
-  const itemsMatched = byProduct.size;
+  const itemsMatched = countBasketItemsWithReceiptMatch(basketNorm, historicalItems);
   const coverageRatio = itemNames.length > 0 ? itemsMatched / itemNames.length : 0;
 
-  // 1. Best total store: only when confidence is sufficient (enough items, enough coverage)
+  // #region agent log
+  if (itemNames.length > 0 && historicalItems.length > 0) {
+    const sample = historicalItems.slice(0, 800).map((x) => x.name);
+    const perBasket = itemNames.slice(0, 12).map((raw) => {
+      const best: { score: number; tier: "strong" | "medium" | "weak"; receiptName: string; reasons: string[] } = {
+        score: 0,
+        tier: "weak",
+        receiptName: "",
+        reasons: [],
+      };
+      for (const rn of sample) {
+        const d = matchBasketToReceiptName(raw, rn);
+        if (d.score > best.score) {
+          best.score = d.score;
+          best.tier = d.tier;
+          best.receiptName = rn;
+          best.reasons = d.reasons;
+        }
+      }
+      return { basket: raw, best };
+    });
+    debugLog("H1", "coverage summary", {
+      itemsMatched,
+      basketItemCount: itemNames.length,
+      coverageRatio,
+      matchedBasketLines: partition.matched.slice(0, 8),
+      unmatchedBasketLines: partition.unmatched.slice(0, 8),
+      bestPerBasket: perBasket,
+    });
+  }
+  // #endregion
+
+  // 1. Best total store: full match when coverage is strong; else partial (store with most items in your history).
   let tempListId: string | null = null;
   try {
     const list = await prisma.smartList.create({
@@ -298,9 +410,15 @@ export async function getBasketInsights(
 
     const hasEnoughItems = itemNames.length >= MIN_BASKET_ITEMS_FOR_STORE;
     const hasEnoughCoverage = coverageRatio >= MIN_COVERAGE_RATIO;
-    const storeConfidenceStrong = hasEnoughItems && hasEnoughCoverage && !!bestResult;
+    /** If the optimizer found a full basket at one store, that is authoritative (coverage ratio uses the same matcher but must not block this). */
+    const fullRecommendation =
+      !!bestResult && !bestResult.partialMatch && hasEnoughItems;
+    const partialRecommendation =
+      !!bestResult &&
+      bestResult.partialMatch === true &&
+      (bestResult.itemsCoveredAtStore ?? 0) > 0;
 
-    if (bestResult && storeConfidenceStrong) {
+    if (bestResult && (fullRecommendation || partialRecommendation)) {
       response.bestStore = {
         enabled: true,
         confidence: coverageRatio,
@@ -308,6 +426,12 @@ export async function getBasketInsights(
         storeAddress: bestResult.bestStoreAddress ?? undefined,
         storeArea: bestResult.bestStoreAddress ? undefined : "in your area",
         fallbackMessage: undefined,
+        whyNoRecommendation: undefined,
+        partialNote: bestResult.partialMatch
+          ? `${bestResult.itemsCoveredAtStore} of ${itemNames.length} items priced at this store in your history. Est. total is for those items only.`
+          : undefined,
+        evidenceSummary: bestResult.evidenceSummary ?? undefined,
+        matchQuality: bestResult.matchQuality ?? undefined,
         itemsMatchedCount: itemsMatched,
         itemsTotalCount: itemNames.length,
       };
@@ -328,7 +452,8 @@ export async function getBasketInsights(
           itemsMatched,
           hasEnoughItems,
           hasEnoughCoverage,
-          bestResult
+          bestResult,
+          hasReceiptLineHistory
         ),
         itemsMatchedCount: itemsMatched,
         itemsTotalCount: itemNames.length,

@@ -12,10 +12,10 @@ import {
   Linking,
   Platform,
 } from "react-native";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter, useLocalSearchParams } from "expo-router";
 import { Search, Send, MapPin, Store, X, ListChecks, Trash2, Bookmark } from "lucide-react-native";
 import { useStore } from "../../src/store/useStore";
-import { getTheme, IOS_BLUE, IOS_RED } from "../../src/theme";
+import { getTheme, IOS_BLUE, IOS_GREEN, IOS_RED } from "../../src/theme";
 import {
   getTransactions,
   getStores,
@@ -23,9 +23,13 @@ import {
   appQuery,
   askSmartBudget,
   getBasketInsights,
+  getBasketSuggestions,
+  recordBasketTermPreference,
   createSmartList,
   getSmartLists,
+  deleteSmartList,
   type BasketInsightsResponse,
+  type SmartListRow,
 } from "../../src/api/client";
 import { getLocalTransactions, saveLocalTransactions } from "../../src/lib/localDb";
 import {
@@ -302,8 +306,17 @@ export default function InsightsScreen() {
   const [saveBasketName, setSaveBasketName] = useState("");
   const [saveBasketLoading, setSaveBasketLoading] = useState(false);
   const [loadBasketModal, setLoadBasketModal] = useState(false);
-  const [savedBaskets, setSavedBaskets] = useState<{ id: string; name: string; items: { name: string }[] }[]>([]);
+  const [savedBaskets, setSavedBaskets] = useState<SmartListRow[]>([]);
   const [loadBasketLoading, setLoadBasketLoading] = useState(false);
+  /** Shown on "Load saved" when > 0 (refreshed on focus and after save/load modal fetch). */
+  const [savedListsCount, setSavedListsCount] = useState<number | null>(null);
+  const lastSuggestQueryRef = useRef("");
+  const [basketSuggestions, setBasketSuggestions] = useState<
+    Array<{ label: string; matchScore: number; frequency: number; preferenceBoost: number; rank: number }>
+  >([]);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const router = useRouter();
+  const { freshBasket: freshBasketParam } = useLocalSearchParams<{ freshBasket?: string }>();
   const locationConsent = useStore((s) => s.locationConsent);
   const setLocationConsent = useStore((s) => s.setLocationConsent);
 
@@ -312,6 +325,34 @@ export default function InsightsScreen() {
     useCallback(() => {
       loadLocationConsent().then(setLocationConsent);
     }, [setLocationConsent])
+  );
+
+  /** Saved-list count for the Load saved button (respects current API URL after env reload). */
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      (async () => {
+        try {
+          const lists = await getSmartLists(authToken ?? null);
+          if (!cancelled) setSavedListsCount(lists.length);
+        } catch {
+          if (!cancelled) setSavedListsCount(0);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [authToken])
+  );
+
+  /** Opening Search from Smart List with a loaded basket — clear finalize UI from a prior session. */
+  useFocusEffect(
+    useCallback(() => {
+      if (freshBasketParam !== "1") return;
+      setShowFinalized(false);
+      setBasketInsights(null);
+      router.setParams({ freshBasket: undefined });
+    }, [freshBasketParam, router])
   );
 
   /** Local fallback: top categories from locally available transactions. */
@@ -503,12 +544,6 @@ export default function InsightsScreen() {
     refetch();
   }, [refetch, refreshKey]);
 
-  useEffect(() => {
-    setShowFinalized(false);
-    setBasketInsights(null);
-    setFinalizeFallback(false);
-  }, [refreshKey]);
-
   /** Run finalize with optional location (only sent when user has consented). */
   const doFinalize = useCallback(
     async (coords: { lat: number; lng: number } | null) => {
@@ -618,6 +653,38 @@ export default function InsightsScreen() {
     }
   };
 
+  const applySuggestion = useCallback(
+    (label: string) => {
+      const broad = lastSuggestQueryRef.current;
+      if (broad && authToken) {
+        recordBasketTermPreference(authToken, broad, label).catch(() => {});
+      }
+      if (!basket.includes(label)) {
+        setBasketStore([...basket, label]);
+      }
+      setBasketInput("");
+      setBasketSuggestions([]);
+    },
+    [basket, authToken, setBasketStore]
+  );
+
+  useEffect(() => {
+    const q = basketInput.trim();
+    if (q.length < 2 || !authToken) {
+      setBasketSuggestions([]);
+      return;
+    }
+    const id = setTimeout(() => {
+      lastSuggestQueryRef.current = q;
+      setSuggestLoading(true);
+      getBasketSuggestions(authToken, { query: q, limit: 12 })
+        .then(setBasketSuggestions)
+        .catch(() => setBasketSuggestions([]))
+        .finally(() => setSuggestLoading(false));
+    }, 400);
+    return () => clearTimeout(id);
+  }, [basketInput, authToken]);
+
   const removeFromBasket = (item: string) => {
     setBasketStore(basket.filter((x) => x !== item));
   };
@@ -633,6 +700,43 @@ export default function InsightsScreen() {
       ]
     );
   }, [basket.length, setBasketStore]);
+
+  const confirmDeleteSavedBasket = useCallback(
+    (listId: string, listName: string) => {
+      Alert.alert("Delete saved basket", `Remove "${listName}" from your saved lists?`, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteSmartList(authToken ?? null, listId);
+              setSavedBaskets((prev) => prev.filter((x) => x.id !== listId));
+              setSavedListsCount((c) => (c != null ? Math.max(0, c - 1) : c));
+            } catch (e) {
+              Alert.alert("Error", e instanceof Error ? e.message : "Could not delete");
+            }
+          },
+        },
+      ]);
+    },
+    [authToken]
+  );
+
+  /** Always available — saved baskets must load even when the current basket is empty. */
+  const openLoadSavedBaskets = useCallback(async () => {
+    setLoadBasketModal(true);
+    setLoadBasketLoading(true);
+    try {
+      const lists = await getSmartLists(authToken ?? null);
+      setSavedListsCount(lists.length);
+      setSavedBaskets(Array.isArray(lists) ? lists : []);
+    } catch {
+      setSavedBaskets([]);
+    } finally {
+      setLoadBasketLoading(false);
+    }
+  }, [authToken]);
 
   const handleAsk = useCallback(() => {
     const msg = query.trim();
@@ -701,7 +805,7 @@ export default function InsightsScreen() {
       {/* Zone 2 — Basket */}
       <Text style={[styles.sectionTitle, { color: textPrimary }]}>Your basket</Text>
       <Text style={[styles.sectionSubtext, { color: textSecondary }]}>
-        Add items (e.g. milk, eggs) and tap Finalize to get a recommended store and estimated total from your receipt history. Save basket to reuse later.
+        Add items (e.g. milk, eggs) and tap Finalize to get a recommended store and estimated total from your receipt history. Tap Load to open a basket you saved earlier — even when the list is empty.
       </Text>
       {basket.length === 0 && (
         <View style={[styles.tipCard, { backgroundColor: glass }]}>
@@ -734,126 +838,184 @@ export default function InsightsScreen() {
             </TouchableOpacity>
           )}
         </View>
+        {basketInput.trim().length >= 2 && authToken ? (
+          <View style={styles.suggestSection}>
+            {suggestLoading ? (
+              <ActivityIndicator size="small" color={IOS_BLUE} style={{ marginVertical: 6 }} />
+            ) : basketSuggestions.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.suggestScroll}
+                keyboardShouldPersistTaps="handled"
+              >
+                {basketSuggestions.map((s) => (
+                  <TouchableOpacity
+                    key={s.label}
+                    style={[styles.suggestChip, { backgroundColor: bg, borderColor: textSecondary }]}
+                    onPress={() => applySuggestion(s.label)}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[styles.suggestChipText, { color: textPrimary }]} numberOfLines={2}>
+                      {s.label}
+                    </Text>
+                    <Text style={[styles.suggestChipMeta, { color: textSecondary }]}>{s.frequency}×</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            ) : null}
+            {!suggestLoading && basketSuggestions.length > 0 ? (
+              <Text style={[styles.suggestHint, { color: textSecondary }]}>From your receipts — tap to add</Text>
+            ) : null}
+          </View>
+        ) : null}
         {basket.length > 0 && (
-          <>
-            <View style={styles.chipRow}>
-              {basket.map((item) => (
-                <TouchableOpacity
-                  key={item}
-                  style={[styles.chip, { backgroundColor: bg }]}
-                  onPress={() => removeFromBasket(item)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.chipText, { color: textPrimary }]}>{item}</Text>
-                  <X size={14} color={textSecondary} />
-                </TouchableOpacity>
-              ))}
-            </View>
-            <View style={styles.finalizeRow}>
+          <View style={styles.chipRow}>
+            {basket.map((item) => (
               <TouchableOpacity
-                style={[styles.finalizeBtn, { backgroundColor: IOS_BLUE, flex: 1 }]}
-                onPress={finalizeLoading ? undefined : handleFinalize}
-                disabled={finalizeLoading}
+                key={item}
+                style={[styles.chip, { backgroundColor: bg }]}
+                onPress={() => removeFromBasket(item)}
                 activeOpacity={0.8}
               >
-                {finalizeLoading ? (
-                  <ActivityIndicator size="small" color="#FFF" />
-                ) : (
-                  <>
-                    <ListChecks size={18} color="#FFF" />
-                    <Text style={styles.finalizeBtnText}>Finalize</Text>
-                  </>
-                )}
+                <Text style={[styles.chipText, { color: textPrimary }]}>{item}</Text>
+                <X size={14} color={textSecondary} />
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.saveBasketBtn, { backgroundColor: bg, borderColor: textSecondary }]}
-                onPress={() => { setSaveBasketName(""); setSaveBasketModal(true); }}
-                activeOpacity={0.8}
-              >
-                <Bookmark size={18} color={IOS_BLUE} />
-                <Text style={[styles.saveBasketBtnText, { color: textPrimary }]}>Save</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.saveBasketBtn, { backgroundColor: bg, borderColor: textSecondary }]}
-                onPress={async () => {
-                  setLoadBasketModal(true);
-                  setLoadBasketLoading(true);
-                  try {
-                    const lists = await getSmartLists(authToken ?? null);
-                    setSavedBaskets(lists.map((l) => ({ id: l.id, name: l.name, items: l.items ?? [] })));
-                  } catch {
-                    setSavedBaskets([]);
-                  } finally {
-                    setLoadBasketLoading(false);
-                  }
-                }}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.saveBasketBtnText, { color: textPrimary }]}>Load</Text>
-              </TouchableOpacity>
-            </View>
-          </>
+            ))}
+          </View>
         )}
-        {showFinalized && basket.length > 0 && (
+        <View style={styles.finalizeRow}>
+          {basket.length > 0 && (
+            <TouchableOpacity
+              style={[styles.finalizeBtn, { backgroundColor: IOS_BLUE, flex: 1 }]}
+              onPress={finalizeLoading ? undefined : handleFinalize}
+              disabled={finalizeLoading}
+              activeOpacity={0.8}
+            >
+              {finalizeLoading ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <>
+                  <ListChecks size={18} color="#FFF" />
+                  <Text style={styles.finalizeBtnText}>Finalize</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+          {basket.length > 0 && (
+            <TouchableOpacity
+              style={[styles.saveBasketBtn, { backgroundColor: bg, borderColor: textSecondary }]}
+              onPress={() => {
+                setSaveBasketName("");
+                setSaveBasketModal(true);
+              }}
+              activeOpacity={0.8}
+            >
+              <Bookmark size={18} color={IOS_BLUE} />
+              <Text style={[styles.saveBasketBtnText, { color: textPrimary }]}>Save</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
-            style={[styles.recommendedCard, { backgroundColor: bg }]}
-            onPress={() => {
-              if (basketInsights?.bestStore?.enabled) {
-                const name = basketInsights.bestStore.storeName ?? "Store";
-                const address = basketInsights.bestStore.storeAddress ?? basketInsights.bestStore.storeArea ?? "";
-                if (address.trim() || name.trim()) openStoreInMaps(name, address);
-              }
-            }}
-            activeOpacity={basketInsights?.bestStore?.enabled ? 0.7 : 1}
-            disabled={!basketInsights?.bestStore?.enabled}
-            accessibilityRole={basketInsights?.bestStore?.enabled ? "button" : undefined}
-            accessibilityLabel={
-              basketInsights?.bestStore?.enabled
-                ? `Recommended store: ${basketInsights.bestStore.storeName ?? "Store"}. Tap to open in Apple Maps or Google Maps.`
-                : "Best total estimate"
-            }
+            style={[
+              styles.saveBasketBtn,
+              { backgroundColor: bg, borderColor: textSecondary },
+              basket.length === 0 ? { flex: 1, minHeight: 48, justifyContent: "center" } : null,
+            ]}
+            onPress={openLoadSavedBaskets}
+            activeOpacity={0.8}
           >
-            <Text style={[styles.recommendedLabel, { color: textSecondary }]}>
-              {basketInsights?.bestStore?.enabled
-                ? "Recommended store (from your receipt history)"
-                : "Best total estimate"}
+            <Text style={[styles.saveBasketBtnText, { color: textPrimary }]}>
+              {savedListsCount != null && savedListsCount > 0 ? `Load saved (${savedListsCount})` : "Load saved"}
             </Text>
-            <View style={styles.recommendedRow}>
-              <Store size={22} color={IOS_BLUE} />
-              <Text style={[styles.recommendedStoreName, { color: textPrimary }]} numberOfLines={1}>
-                {basketInsights?.bestStore?.enabled
-                  ? (basketInsights.bestStore.storeName ?? "—")
-                  : (basketInsights?.bestStore?.whyNoRecommendation ?? basketInsights?.bestStore?.fallbackMessage ?? "Don't have best pick yet 🥶")}
+          </TouchableOpacity>
+        </View>
+        {finalizeLoading && basket.length > 0 ? (
+          <Text style={[styles.finalizeLoadingHint, { color: textSecondary }]}>Getting your estimate and store match…</Text>
+        ) : null}
+      </View>
+
+      {/* Finalize results: outside basket card so it stays visible and is not visually nested with inputs */}
+      {showFinalized && basket.length > 0 && (
+        <TouchableOpacity
+          style={[
+            styles.recommendedCard,
+            styles.finalizeHeroCard,
+            { backgroundColor: glass, borderColor: "rgba(0,122,255,0.35)" },
+          ]}
+          onPress={() => {
+            if (basketInsights?.bestStore?.enabled) {
+              const name = basketInsights.bestStore.storeName ?? "Store";
+              const address = basketInsights.bestStore.storeAddress ?? basketInsights.bestStore.storeArea ?? "";
+              if (address.trim() || name.trim()) openStoreInMaps(name, address);
+            }
+          }}
+          activeOpacity={basketInsights?.bestStore?.enabled ? 0.7 : 1}
+          disabled={!basketInsights?.bestStore?.enabled}
+          accessibilityRole={basketInsights?.bestStore?.enabled ? "button" : undefined}
+          accessibilityLabel={
+            basketInsights?.bestStore?.enabled
+              ? `Recommended store: ${basketInsights.bestStore.storeName ?? "Store"}. Tap to open in Apple Maps or Google Maps.`
+              : "Best total estimate"
+          }
+        >
+          <Text style={[styles.recommendedLabel, { color: textSecondary }]}>Best total & store</Text>
+          <Text style={[styles.recommendedLabel, { color: textSecondary, marginTop: 2, marginBottom: 6, fontSize: 12, fontWeight: "400" }]}>
+            {basketInsights?.bestStore?.enabled
+              ? "Recommended from your receipt history"
+              : "Estimate from prices we can match"}
+          </Text>
+          <View style={styles.recommendedRow}>
+            <Store size={22} color={IOS_BLUE} />
+            <Text style={[styles.recommendedStoreName, { color: textPrimary }]} numberOfLines={2}>
+              {basketInsights?.bestStore?.enabled
+                ? (basketInsights.bestStore.storeName ?? "—")
+                : (basketInsights?.bestStore?.whyNoRecommendation ??
+                    basketInsights?.bestStore?.fallbackMessage ??
+                    "Add matching receipt lines or tap Finalize again after scanning.")}
+            </Text>
+          </View>
+          {(basketInsights?.receiptCount != null ||
+            (basketInsights?.bestStore?.itemsMatchedCount != null && basketInsights?.bestStore?.itemsTotalCount != null)) && (
+            <Text style={[styles.confidenceHint, { color: textSecondary }]}>
+              {basketInsights?.receiptCount != null && `Based on ${basketInsights.receiptCount} receipt${basketInsights.receiptCount === 1 ? "" : "s"}. `}
+              {basketInsights?.bestStore?.itemsMatchedCount != null && basketInsights?.bestStore?.itemsTotalCount != null &&
+                `We have prices for ${basketInsights.bestStore.itemsMatchedCount} of ${basketInsights.bestStore.itemsTotalCount} items.`}
+            </Text>
+          )}
+          {basketInsights?.bestStore?.enabled && basketInsights.bestStore.partialNote ? (
+            <Text style={[styles.confidenceHint, { color: textSecondary }]}>{basketInsights.bestStore.partialNote}</Text>
+          ) : null}
+          {basketInsights?.bestStore?.enabled && basketInsights.bestStore.evidenceSummary ? (
+            <Text style={[styles.confidenceHint, { color: textSecondary }]}>{basketInsights.bestStore.evidenceSummary}</Text>
+          ) : null}
+          {basketInsights?.bestStore?.enabled && basketInsights.bestStore.matchQuality ? (
+            <Text style={[styles.confidenceHint, { color: textSecondary }]}>
+              Evidence quality: {basketInsights.bestStore.matchQuality}
+            </Text>
+          ) : null}
+          <View style={styles.estimatedTotalRow}>
+            <Text style={[styles.estimatedTotalLabel, { color: textSecondary }]}>Est. total</Text>
+            <Text style={[styles.estimatedTotalAmount, { color: IOS_GREEN }]}>
+              $
+              {Number(basketInsights?.estimatedTotalKnownData ?? 0).toFixed(2)}
+            </Text>
+          </View>
+          <Text style={[styles.estimatedTotalSub, { color: textSecondary }]}>
+            From known receipt prices for this list (quantity 1 per line unless noted).
+          </Text>
+          {basketInsights?.bestStore?.enabled && (basketInsights.bestStore?.storeAddress || basketInsights.bestStore?.storeArea) && (
+            <View style={styles.recommendedAddressRow}>
+              <MapPin size={16} color={textSecondary} />
+              <Text style={[styles.recommendedAddress, { color: textSecondary }]} numberOfLines={2}>
+                {(basketInsights.bestStore.storeAddress ?? basketInsights.bestStore.storeArea ?? "—").trim() || "—"}
               </Text>
             </View>
-            {(basketInsights?.receiptCount != null || (basketInsights?.bestStore?.itemsMatchedCount != null && basketInsights?.bestStore?.itemsTotalCount != null)) && (
-              <Text style={[styles.confidenceHint, { color: textSecondary }]}>
-                {basketInsights?.receiptCount != null && `Based on ${basketInsights.receiptCount} receipt${basketInsights.receiptCount === 1 ? "" : "s"}. `}
-                {basketInsights?.bestStore?.itemsMatchedCount != null && basketInsights?.bestStore?.itemsTotalCount != null &&
-                  `We have prices for ${basketInsights.bestStore.itemsMatchedCount} of ${basketInsights.bestStore.itemsTotalCount} items.`}
-              </Text>
-            )}
-            <Text style={[styles.recommendedTotal, { color: textPrimary }]}>
-              Est. total (from known data): $
-              {(basketInsights?.bestStore?.enabled
-                ? (basketInsights?.estimatedTotalKnownData ?? 0)
-                : (basketInsights?.estimatedTotalKnownData ?? 0)
-              ).toFixed(2)}
-            </Text>
-            {basketInsights?.bestStore?.enabled && (basketInsights.bestStore?.storeAddress || basketInsights.bestStore?.storeArea) && (
-              <View style={styles.recommendedAddressRow}>
-                <MapPin size={16} color={textSecondary} />
-                <Text style={[styles.recommendedAddress, { color: textSecondary }]} numberOfLines={2}>
-                  {(basketInsights.bestStore.storeAddress ?? basketInsights.bestStore.storeArea ?? "—").trim() || "—"}
-                </Text>
-              </View>
-            )}
-            {basketInsights?.bestStore?.enabled && (
-              <Text style={[styles.navigateHint, { color: IOS_BLUE }]}>Tap to open in Maps</Text>
-            )}
-          </TouchableOpacity>
-        )}
-      </View>
+          )}
+          {basketInsights?.bestStore?.enabled && (
+            <Text style={[styles.navigateHint, { color: IOS_BLUE }]}>Tap to open in Maps</Text>
+          )}
+        </TouchableOpacity>
+      )}
 
       {/* Zone 3 — Empty state: category tiles only when basket is empty (premium tiles, tap for detail) */}
       {basket.length === 0 && (
@@ -891,6 +1053,17 @@ export default function InsightsScreen() {
           <Text style={[styles.sectionHint, { color: textSecondary, marginBottom: 12 }]}>
             Data comes from your scanned receipts. Use short item names (e.g. milk, eggs) to match better.
           </Text>
+          {basketInsights?.unmatchedBasketLines && basketInsights.unmatchedBasketLines.length > 0 ? (
+            <View style={[styles.refinementBanner, { backgroundColor: bg, borderColor: textSecondary }]}>
+              <Text style={[styles.sectionLabel, { color: textSecondary, marginBottom: 4 }]}>No receipt match yet</Text>
+              <Text style={[styles.sectionHint, { color: textPrimary }]}>
+                {basketInsights.unmatchedBasketLines.join(", ")}
+              </Text>
+              <Text style={[styles.sectionHint, { color: textSecondary, marginTop: 6 }]}>
+                Try renaming these to match how they appear on a past receipt, or pick a more specific variant.
+              </Text>
+            </View>
+          ) : null}
 
           {/* 2. Your History */}
           <Text style={[styles.sectionLabel, { color: textSecondary }]}>Your History</Text>
@@ -1029,10 +1202,27 @@ export default function InsightsScreen() {
                 const name = saveBasketName.trim() || "My basket";
                 setSaveBasketLoading(true);
                 try {
+                  const estFromInsights =
+                    basketInsights != null
+                      ? (typeof basketInsights.bestTotalStore?.estimatedTotal === "number" &&
+                        Number.isFinite(basketInsights.bestTotalStore.estimatedTotal)
+                          ? basketInsights.bestTotalStore.estimatedTotal
+                          : typeof basketInsights.estimatedTotalKnownData === "number" &&
+                              Number.isFinite(basketInsights.estimatedTotalKnownData)
+                            ? basketInsights.estimatedTotalKnownData
+                            : undefined)
+                      : undefined;
                   await createSmartList(authToken ?? null, {
                     name,
                     items: basket.map((itemName) => ({ name: itemName, quantity: 1 })),
+                    ...(estFromInsights !== undefined ? { estimatedTotalSnapshot: estFromInsights } : {}),
                   });
+                  try {
+                    const lists = await getSmartLists(authToken ?? null);
+                    setSavedListsCount(lists.length);
+                  } catch {
+                    setSavedListsCount((c) => (c != null ? c + 1 : 1));
+                  }
                   setSaveBasketModal(false);
                   Alert.alert("Saved", `"${name}" saved. Tap Load to use it later.`);
                 } catch (e) {
@@ -1066,19 +1256,40 @@ export default function InsightsScreen() {
           ) : (
             <ScrollView style={{ maxHeight: 280 }} showsVerticalScrollIndicator={false}>
               {savedBaskets.map((list) => (
-                <TouchableOpacity
-                  key={list.id}
-                  style={[styles.loadBasketRow, { backgroundColor: bg }]}
-                  onPress={() => {
-                    setBasketStore(list.items.map((i) => i.name));
-                    setLoadBasketModal(false);
-                    setShowFinalized(false);
-                    setBasketInsights(null);
-                  }}
-                >
-                  <Text style={[styles.loadBasketName, { color: textPrimary }]} numberOfLines={1}>{list.name}</Text>
-                  <Text style={[styles.loadBasketCount, { color: textSecondary }]}>{list.items.length} items</Text>
-                </TouchableOpacity>
+                <View key={list.id} style={[styles.loadBasketRow, { backgroundColor: bg }]}>
+                  <TouchableOpacity
+                    style={styles.loadBasketRowMain}
+                    onPress={() => {
+                      setBasketStore(list.items.map((i) => i.name));
+                      setLoadBasketModal(false);
+                      setShowFinalized(false);
+                      setBasketInsights(null);
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <View style={styles.loadBasketRowTextCol}>
+                      <Text style={[styles.loadBasketName, { color: textPrimary }]} numberOfLines={1}>
+                        {list.name}
+                      </Text>
+                      {list.estimatedTotalSnapshot != null &&
+                      typeof list.estimatedTotalSnapshot === "number" &&
+                      Number.isFinite(list.estimatedTotalSnapshot) ? (
+                        <Text style={[styles.loadBasketEstimate, { color: IOS_GREEN }]}>
+                          Est. ${list.estimatedTotalSnapshot.toFixed(2)}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Text style={[styles.loadBasketCount, { color: textSecondary }]}>{list.items.length} items</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    accessibilityLabel={`Delete saved basket ${list.name}`}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    onPress={() => confirmDeleteSavedBasket(list.id, list.name)}
+                    style={styles.loadBasketDeleteBtn}
+                  >
+                    <Trash2 size={18} color={IOS_RED} />
+                  </TouchableOpacity>
+                </View>
               ))}
             </ScrollView>
           )}
@@ -1177,6 +1388,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  suggestSection: { marginBottom: 10 },
+  suggestScroll: { flexDirection: "row", gap: 8, paddingVertical: 4 },
+  suggestChip: {
+    maxWidth: 200,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  suggestChipText: { fontSize: 13, fontWeight: "500" },
+  suggestChipMeta: { fontSize: 11, marginTop: 4 },
+  suggestHint: { fontSize: 11, marginTop: 4 },
   basketInput: {
     flex: 1,
     borderRadius: 12,
@@ -1233,10 +1456,43 @@ const styles = StyleSheet.create({
   saveBasketModalBtn: { flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: "center" },
   saveBasketModalBtnText: { fontSize: 16, fontWeight: "600" },
   saveBasketModalBtnTextWhite: { color: "#FFF", fontSize: 16, fontWeight: "600" },
-  loadBasketRow: { padding: 14, borderRadius: 12, marginBottom: 8 },
+  loadBasketRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 12,
+    marginBottom: 8,
+    overflow: "hidden",
+  },
+  loadBasketRowMain: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 14,
+    paddingLeft: 14,
+    paddingRight: 8,
+    gap: 8,
+  },
+  loadBasketRowTextCol: { flex: 1, minWidth: 0 },
+  loadBasketDeleteBtn: { paddingVertical: 14, paddingRight: 14, paddingLeft: 4, justifyContent: "center" },
   loadBasketName: { fontSize: 16, fontWeight: "600" },
-  loadBasketCount: { fontSize: 12, marginTop: 2 },
+  loadBasketEstimate: { fontSize: 12, fontWeight: "600", marginTop: 3 },
+  loadBasketCount: { fontSize: 12, flexShrink: 0 },
   recommendedCard: { borderRadius: 16, padding: 16, marginTop: 12, borderWidth: 1, borderColor: "rgba(255, 255, 255, 0.5)" },
+  finalizeHeroCard: { marginTop: 8, marginBottom: 8 },
+  finalizeLoadingHint: { fontSize: 13, textAlign: "center", marginTop: 10, marginBottom: 2 },
+  estimatedTotalRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(128,128,128,0.35)",
+  },
+  estimatedTotalLabel: { fontSize: 14, fontWeight: "600" },
+  estimatedTotalAmount: { fontSize: 24, fontWeight: "700", letterSpacing: -0.5 },
+  estimatedTotalSub: { fontSize: 11, lineHeight: 15, marginTop: 4 },
   recommendedLabel: { fontSize: 12, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 },
   recommendedRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
   recommendedStoreName: { fontSize: 18, fontWeight: "700", flex: 1 },
@@ -1254,6 +1510,12 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255, 255, 255, 0.5)",
   },
   insightsTitle: { fontSize: 18, fontWeight: "700", marginBottom: 16 },
+  refinementBanner: {
+    marginBottom: 16,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
   sectionLabel: { fontSize: 14, fontWeight: "600", marginTop: 16, marginBottom: 6 },
   sectionHint: { fontSize: 12, marginBottom: 6, opacity: 0.9 },
   insightRow: { paddingVertical: 8 },

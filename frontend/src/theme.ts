@@ -2,6 +2,7 @@ export const IOS_BG = "#F2F2F7";
 export const MIDNIGHT_BG = "#1C1C1E";
 export const IOS_BLUE = "#007AFF";
 export const IOS_RED = "#FF3B30";
+export const IOS_GREEN = "#34C759";
 export const GLASS_WHITE = "rgba(255, 255, 255, 0.8)";
 export const GLASS_DARK = "rgba(44, 44, 46, 0.8)";
 export const TEXT_LIGHT = "#111827";

@@ -1,0 +1,31 @@
+---
+description: Bootstrap order for agents using MCP + local env (Firebase, Prisma, Supabase).
+alwaysApply: false
+---
+
+# MCP + local tooling (SmartBudgetAI)
+
+## Before claiming “Firebase works”
+
+1. Run from repo root: **`npm run verify`** (checks Firebase CLI login, `.env` presence, DB).
+2. Or call Firebase MCP **`firebase_get_environment`**: if **Authenticated User** is `<NONE>`, the user must complete **`firebase login`** (CLI) or MCP **`firebase_login`** once — agents cannot bypass Google OAuth without user action.
+
+## MCP tool discovery
+
+- Read tool schemas under the Cursor project `mcps/<server>/tools/*.json` before calling tools.
+- **Supabase** (`user-supabase`): DB/schema/SQL for the linked project.
+- **Prisma-Local** (`plugin-prisma-Prisma-Local`): Prisma CLI workflows; **`cwd`** is **`backend`** in `.cursor/mcp.json`.
+- **Prisma-Remote** (`plugin-prisma-Prisma-Remote`): Prisma Postgres **cloud** product — not the same as Supabase Postgres unless migrated.
+- **Firebase** (`plugin-firebase-firebase`): needs CLI login for project-scoped tools.
+- **GitHub** (remote): replace **`YOUR_GITHUB_PAT`** in `.cursor/mcp.json` with a token (`repo` scope as needed). Never commit the real token.
+- **Sentry** (`https://mcp.sentry.dev/mcp`): OAuth in Cursor; scope org/project in Sentry MCP docs if needed.
+- **Linear** (`https://mcp.linear.app/mcp`): OAuth; issues/projects for this repo — preferred over Notion for dev task tracking.
+
+## Runtime truth
+
+- App auth: **Firebase JS SDK** (`frontend/.env` `EXPO_PUBLIC_FIREBASE_*`) + **Firebase Admin** (`backend/.env` `FIREBASE_PROJECT_ID` / service account).
+- App DB: **Prisma** + **`backend/.env`** URLs — not replaced by MCP.
+
+## Secrets
+
+- Never commit `.env` or service account JSON. Do not paste secrets into chat.

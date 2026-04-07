@@ -1,5 +1,3 @@
-import { Platform } from "react-native";
-
 /** Backend base URL: app.json extra.apiUrl > EXPO_PUBLIC_API_URL in .env > fallback (simulator/web). Use EXPO_PUBLIC_API_URL with your LAN IP for a physical device. Backend runs on port 8080. */
 const BASE_URL = "http://localhost:8080";
 
@@ -13,7 +11,6 @@ function getBaseURL(): string {
     return process.env.EXPO_PUBLIC_API_URL.trim().replace(/\/$/, "");
   return BASE_URL;
 }
-const baseURL = getBaseURL();
 const REQUEST_TIMEOUT_MS = 30000;
 const DEV_TOKEN = "dev-token";
 
@@ -139,7 +136,7 @@ export async function updateStoreAddress(
 }
 
 export async function getStores(idToken: string | null): Promise<StoreRow[]> {
-  const res = await fetch(`${baseURL}/api/transactions/stores`, {
+  const res = await fetch(`${getBaseURL()}/api/transactions/stores`, {
     method: "GET",
     headers: authHeaders(idToken),
   });
@@ -176,7 +173,7 @@ export async function updateProfile(
   idToken: string | null,
   data: { displayName?: string | null; avatarUrl?: string | null }
 ): Promise<{ displayName: string | null; avatarUrl: string | null }> {
-  const res = await fetch(`${baseURL}/api/user/profile`, {
+  const res = await fetch(`${getBaseURL()}/api/user/profile`, {
     method: "PUT",
     headers: authHeaders(idToken),
     body: JSON.stringify(data),
@@ -193,7 +190,7 @@ export async function deleteTransaction(
   mode: "all" | "imageOnly",
   idToken: string | null
 ): Promise<void> {
-  const res = await fetch(`${baseURL}/api/transactions/${id}?mode=${mode}`, {
+  const res = await fetch(`${getBaseURL()}/api/transactions/${id}?mode=${mode}`, {
     method: "DELETE",
     headers: authHeaders(idToken),
   });
@@ -208,7 +205,7 @@ export async function appQuery(
   idToken: string | null,
   query: string
 ): Promise<{ answer: string; data?: Record<string, unknown> }> {
-  const res = await fetch(`${baseURL}/api/app-query`, {
+  const res = await fetch(`${getBaseURL()}/api/app-query`, {
     method: "POST",
     headers: authHeaders(idToken),
     body: JSON.stringify({ query: (query || "").trim() }),
@@ -221,7 +218,7 @@ export async function appQuery(
 }
 
 export async function askSmartBudget(idToken: string | null, message: string): Promise<{ reply: string }> {
-  const res = await fetch(`${baseURL}/api/ai/chat`, {
+  const res = await fetch(`${getBaseURL()}/api/ai/chat`, {
     method: "POST",
     headers: authHeaders(idToken),
     body: JSON.stringify({ message: message.trim() || "Summarize my spending." }),
@@ -234,7 +231,7 @@ export async function askSmartBudget(idToken: string | null, message: string): P
 }
 
 export async function purgeAllData(idToken: string | null): Promise<{ message: string }> {
-  const res = await fetch(`${baseURL}/api/transactions/purge/all`, {
+  const res = await fetch(`${getBaseURL()}/api/transactions/purge/all`, {
     method: "DELETE",
     headers: authHeaders(idToken),
   });
@@ -246,7 +243,7 @@ export async function purgeAllData(idToken: string | null): Promise<{ message: s
 }
 
 export async function getReceipts(idToken: string | null, search?: string) {
-  const url = new URL(`${baseURL}/api/receipts`);
+  const url = new URL(`${getBaseURL()}/api/receipts`);
   if (typeof search === "string" && search.trim()) url.searchParams.set("search", search.trim());
   const res = await fetch(url.toString(), {
     method: "GET",
@@ -260,50 +257,26 @@ export async function getReceipts(idToken: string | null, search?: string) {
 }
 
 /**
- * Load receipt image for <Image source={{ uri }} />. Uses file download on native (avoids huge base64 data URIs);
- * web keeps JSON+data-URI. Backend: GET /api/receipts/:id/image (JSON if Accept: application/json, else JPEG bytes).
+ * Load receipt image for <Image source={{ uri }} />. Uses GET + JSON `{ image: base64 }` so `fetch` sends
+ * Authorization reliably (expo-file-system downloadAsync + headers is flaky on iOS). `idToken` may be null — uses dev-token in dev.
  */
 export async function getReceiptImageDataUri(
   idToken: string | null,
   receiptId: string
 ): Promise<string | null> {
   const url = `${getBaseURL()}/api/receipts/${encodeURIComponent(receiptId)}/image`;
-  const headers = authBearerOnly(idToken);
-
-  async function loadJsonDataUri(): Promise<string | null> {
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { ...headers, Accept: "application/json", "Content-Type": "application/json" },
-    });
+  const headers = {
+    ...authBearerOnly(idToken),
+    Accept: "application/json",
+  };
+  try {
+    const res = await fetch(url, { method: "GET", headers });
     if (!res.ok) return null;
     const data = (await res.json()) as { image?: string };
     const base64 = typeof data?.image === "string" ? data.image : null;
     return base64 ? `data:image/jpeg;base64,${base64}` : null;
-  }
-
-  if (Platform.OS === "web") {
-    try {
-      return await loadJsonDataUri();
-    } catch {
-      return null;
-    }
-  }
-
-  try {
-    // Native: download JPEG to cache (auth headers); avoids Hermes/data-URI size issues on large receipts.
-    const FileSystem = require("expo-file-system/legacy") as typeof import("expo-file-system/legacy");
-    const cacheDir = FileSystem.cacheDirectory;
-    if (!cacheDir) return loadJsonDataUri();
-    const fileUri = `${cacheDir}receipt-${receiptId}.jpg`;
-    const result = await FileSystem.downloadAsync(url, fileUri, { headers });
-    if (result.status !== 200) return loadJsonDataUri();
-    return result.uri;
   } catch {
-    try {
-      return await loadJsonDataUri();
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
@@ -592,7 +565,7 @@ export async function getHouseholdReceipts(idToken: string | null, limit?: numbe
 }
 
 export async function postDemoSeed(idToken: string | null) {
-  const res = await fetch(`${baseURL}/api/demo/seed`, {
+  const res = await fetch(`${getBaseURL()}/api/demo/seed`, {
     method: "POST",
     headers: authHeaders(idToken),
   });
@@ -615,7 +588,7 @@ export async function generateReport(
   idToken: string | null,
   period: "Weekly" | "Monthly"
 ): Promise<ReportResult> {
-  const res = await fetch(`${baseURL}/api/reports/generate`, {
+  const res = await fetch(`${getBaseURL()}/api/reports/generate`, {
     method: "POST",
     headers: authHeaders(idToken),
     body: JSON.stringify({ period }),
@@ -840,6 +813,9 @@ export type BasketInsightsResponse = {
     storeArea?: string | null;
     fallbackMessage?: string | null;
     whyNoRecommendation?: string | null;
+    partialNote?: string | null;
+    evidenceSummary?: string | null;
+    matchQuality?: "strong" | "mixed" | "weak";
     itemsMatchedCount?: number;
     itemsTotalCount?: number;
   };
@@ -888,6 +864,10 @@ export type BasketInsightsResponse = {
     highestPrice: number;
     dataPointCount: number;
   }> | null;
+  /** Lines that matched receipt history (coverage). */
+  matchedBasketLines?: string[];
+  /** Basket lines with no receipt match — refine these for better estimates. */
+  unmatchedBasketLines?: string[];
   multiStoreRecommendation: {
     enabled: boolean;
     stores?: Array<{
@@ -918,6 +898,47 @@ export async function getBasketInsights(
     throw new Error((data as { error?: string }).error ?? "Failed to fetch basket insights");
   }
   return res.json();
+}
+
+export type BasketSuggestion = {
+  label: string;
+  matchScore: number;
+  frequency: number;
+  preferenceBoost: number;
+  rank: number;
+};
+
+export async function getBasketSuggestions(
+  idToken: string | null,
+  payload: { query: string; limit?: number }
+): Promise<BasketSuggestion[]> {
+  const res = await fetch(`${getBaseURL()}/api/basket/suggestions`, {
+    method: "POST",
+    headers: authHeaders(idToken),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error ?? "Failed to fetch suggestions");
+  }
+  const data = (await res.json()) as { suggestions?: BasketSuggestion[] };
+  return Array.isArray(data.suggestions) ? data.suggestions : [];
+}
+
+export async function recordBasketTermPreference(
+  idToken: string | null,
+  termKey: string,
+  pickedLabel: string
+): Promise<void> {
+  const res = await fetch(`${getBaseURL()}/api/basket/preference`, {
+    method: "POST",
+    headers: authHeaders(idToken),
+    body: JSON.stringify({ termKey, pickedLabel }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error ?? "Failed to save preference");
+  }
 }
 
 export async function optInCommunity(idToken: string | null): Promise<{ success: boolean; isCommunityOptIn: boolean }> {
@@ -1379,10 +1400,18 @@ export async function shareReceiptToGroup(
 }
 
 export type SmartListItemRow = { id: string; name: string; quantity: number };
-export type SmartListRow = { id: string; name: string; createdAt: string; updatedAt: string; items: SmartListItemRow[] };
+export type SmartListRow = {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  /** Set when the list was saved from Search with a known estimate (Finalize). */
+  estimatedTotalSnapshot?: number | null;
+  items: SmartListItemRow[];
+};
 
 export async function getSmartLists(idToken: string | null): Promise<SmartListRow[]> {
-  const res = await fetch(`${baseURL}/api/smartlist`, {
+  const res = await fetch(`${getBaseURL()}/api/smartlist`, {
     method: "GET",
     headers: authHeaders(idToken),
   });
@@ -1395,9 +1424,14 @@ export async function getSmartLists(idToken: string | null): Promise<SmartListRo
 
 export async function createSmartList(
   idToken: string | null,
-  payload: { name?: string; items: { name: string; quantity?: number }[] }
+  payload: {
+    name?: string;
+    items: { name: string; quantity?: number }[];
+    /** Optional: from basket insights when user saved after Finalize (or any known estimate). */
+    estimatedTotalSnapshot?: number;
+  }
 ): Promise<SmartListRow> {
-  const res = await fetch(`${baseURL}/api/smartlist`, {
+  const res = await fetch(`${getBaseURL()}/api/smartlist`, {
     method: "POST",
     headers: authHeaders(idToken),
     body: JSON.stringify(payload),
@@ -1407,6 +1441,16 @@ export async function createSmartList(
     throw new Error(err.error || "Failed to create smart list");
   }
   return res.json();
+}
+
+export async function deleteSmartList(idToken: string | null, listId: string): Promise<void> {
+  const res = await fetch(`${getBaseURL()}/api/smartlist/${encodeURIComponent(listId)}`, {
+    method: "DELETE",
+    headers: authHeaders(idToken),
+  });
+  if (res.status === 204) return;
+  const err = await res.json().catch(() => ({ error: res.statusText }));
+  throw new Error((err as { error?: string }).error || "Failed to delete list");
 }
 
 export type OptimizeResult = {
@@ -1420,7 +1464,7 @@ export type OptimizeResult = {
 };
 
 export async function optimizeSmartList(idToken: string | null, listId: string): Promise<OptimizeResult> {
-  const res = await fetch(`${baseURL}/api/smartlist/${listId}/optimize`, {
+  const res = await fetch(`${getBaseURL()}/api/smartlist/${listId}/optimize`, {
     method: "POST",
     headers: authHeaders(idToken),
   });

@@ -1,4 +1,11 @@
 import { prisma } from "../lib/db";
+import {
+  matchBasketToReceiptName,
+  MATCH_THRESHOLD_PRICE,
+  tierToNumericWeight,
+  type MatchTier,
+} from "./basketMatcherEngine";
+import { getItemWhereForUserReceipts } from "./basketReceiptScope";
 
 export interface BasketItemPrice {
   itemName: string;
@@ -16,31 +23,47 @@ export interface OptimizeBasketResult {
   theoreticalMinimum: number;
   estimatedSavings: number;
   itemBreakdown: BasketItemPrice[];
+  /** No single store had every item; we chose the store covering the most items (tie-break: lower sum for covered lines). */
+  partialMatch?: boolean;
+  itemsCoveredAtStore?: number;
+  basketItemCount?: number;
+  /** Why this store won vs alternatives (evidence-weighted ranking). */
+  evidenceSummary?: string;
+  /** Aggregate match quality at the chosen store. */
+  matchQuality?: "strong" | "mixed" | "weak";
+}
+
+type HistoricalRow = {
+  name: string;
+  unitPrice: number;
+  receipt: { storeId: string; date: Date; store: { name: string; address: string | null } };
+};
+
+type Candidate = {
+  storeId: string;
+  storeName: string;
+  storeAddress: string | null;
+  unitPrice: number;
+  receiptItemName: string;
+  matchScore: number;
+  tier: MatchTier;
+  receiptDate: Date;
+};
+
+function recencyMultiplier(date: Date): number {
+  const days = Math.max(0, (Date.now() - date.getTime()) / 86400000);
+  return Math.max(0.38, 1 - Math.min(days, 730) / 730);
+}
+
+function pickBetter(a: Candidate, b: Candidate): Candidate {
+  const wa = a.matchScore * tierToNumericWeight(a.tier) * recencyMultiplier(a.receiptDate);
+  const wb = b.matchScore * tierToNumericWeight(b.tier) * recencyMultiplier(b.receiptDate);
+  if (Math.abs(wa - wb) > 0.015) return wa >= wb ? a : b;
+  return a.unitPrice <= b.unitPrice ? a : b;
 }
 
 /**
- * Normalize item name for matching (lowercase, trim, collapse spaces).
- */
-function normalizeName(name: string): string {
-  return name.toLowerCase().trim().replace(/\s+/g, " ");
-}
-
-/** Strip size/units and common modifiers so "Milk 2% 1L" and "Organic Milk" both match "milk". */
-function stripSizeAndUnits(normalized: string): string {
-  return normalized
-    .replace(/\b\d*\.?\d+\s*(l|liter|litre|ml|g|kg|lb|oz|mg|ml)\b/gi, " ")
-    .replace(/\b\d+%\s*/g, " ")
-    .replace(/\b(organic|whole|skim|2%|1%|fat\s*free|low\s*fat|large|medium|small|dozen|pack|ct|pk|ea)\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim() || normalized;
-}
-
-/**
- * Find the best single store to visit for the entire basket (Best Overall Basket):
- * - For each list item, get historical unit prices by store from past receipts.
- * - For each store that has at least one matching item, compute total basket cost.
- * - Best store = store with minimum total. Also compute theoretical minimum
- *   (sum over items of quantity * min unit price across all stores) for savings.
+ * Find best single store: evidence-weighted matches (not just coverage + raw subtotal).
  */
 export async function optimizeBasket(
   userId: string,
@@ -54,143 +77,198 @@ export async function optimizeBasket(
 
   const listItems = list.items;
 
-  // Fetch all items from user's receipts with store info (historical prices)
-  const historicalItems = await prisma.item.findMany({
-    where: { receipt: { userId } },
+  const itemWhere = await getItemWhereForUserReceipts(userId);
+  const historicalItems = (await prisma.item.findMany({
+    where: itemWhere,
     include: {
       receipt: {
         include: { store: true },
       },
     },
-  });
+  })) as HistoricalRow[];
 
-  type PriceEntry = {
-    storeId: string;
-    storeName: string;
-    storeAddress: string | null;
-    unitPrice: number;
-    receiptItemName?: string;
-  };
-  const priceByProductAndStore = new Map<string, PriceEntry[]>();
+  /** For each basket line: best candidate per store */
+  const listItemCandidates: { name: string; quantity: number; byStore: Map<string, Candidate> }[] = [];
 
-  for (const it of historicalItems) {
-    const key = normalizeName(it.name);
-    const coreKey = stripSizeAndUnits(key);
-    const entry = {
-      storeId: it.receipt.storeId,
-      storeName: it.receipt.store.name,
-      storeAddress: it.receipt.store.address,
-      unitPrice: it.unitPrice,
-      receiptItemName: it.name,
-    };
-    for (const k of [key, coreKey].filter(Boolean)) {
-      if (!priceByProductAndStore.has(k)) priceByProductAndStore.set(k, []);
-      const arr = priceByProductAndStore.get(k)!;
-      const existing = arr.find((e) => e.storeId === entry.storeId);
-      if (!existing) arr.push({ ...entry });
-      else if (entry.unitPrice < existing.unitPrice) existing.unitPrice = entry.unitPrice;
+  for (const li of listItems) {
+    const byStore = new Map<string, Candidate>();
+    for (const hi of historicalItems) {
+      const m = matchBasketToReceiptName(li.name, hi.name);
+      if (m.score < MATCH_THRESHOLD_PRICE) continue;
+      const cand: Candidate = {
+        storeId: hi.receipt.storeId,
+        storeName: hi.receipt.store.name,
+        storeAddress: hi.receipt.store.address,
+        unitPrice: hi.unitPrice,
+        receiptItemName: hi.name,
+        matchScore: m.score,
+        tier: m.tier,
+        receiptDate: hi.receipt.date,
+      };
+      const prev = byStore.get(cand.storeId);
+      if (!prev) byStore.set(cand.storeId, cand);
+      else byStore.set(cand.storeId, pickBetter(cand, prev));
     }
-  }
-
-  /** Match basket item to receipt items: exact key, core key (strip size/units), or substring. */
-  function getCandidatesForBasketItem(basketKey: string): Array<{ storeId: string; storeName: string; storeAddress: string | null; unitPrice: number; receiptItemName?: string }> {
-    const coreBasket = stripSizeAndUnits(basketKey);
-    const results = new Map<string, { storeId: string; storeName: string; storeAddress: string | null; unitPrice: number; receiptItemName?: string }>();
-    for (const [receiptKey, entries] of priceByProductAndStore) {
-      const coreReceipt = stripSizeAndUnits(receiptKey);
-      const match =
-        basketKey.length >= 2 &&
-        (receiptKey.includes(basketKey) ||
-          basketKey.includes(receiptKey) ||
-          coreReceipt.includes(coreBasket) ||
-          coreBasket.includes(coreReceipt));
-      if (!match) continue;
-      for (const e of entries) {
-        const cur = results.get(e.storeId);
-        if (!cur || e.unitPrice < cur.unitPrice) results.set(e.storeId, { ...e });
-      }
-    }
-    return [...results.values()];
-  }
-
-  // For each list item, find best price per store (exact → core → substring)
-  const listItemPrices = listItems.map((li) => {
-    const key = normalizeName(li.name);
-    const coreKey = stripSizeAndUnits(key);
-    const candidates =
-      priceByProductAndStore.get(key) ??
-      priceByProductAndStore.get(coreKey) ??
-      getCandidatesForBasketItem(key);
-    return {
+    listItemCandidates.push({
       name: li.name,
       quantity: li.quantity,
-      pricesPerStore: candidates,
-    };
-  });
+      byStore,
+    });
+  }
 
-  // All stores that appear in at least one item's history
   const storeIds = new Set<string>();
-  for (const lip of listItemPrices) {
-    for (const p of lip.pricesPerStore) storeIds.add(p.storeId);
+  for (const row of listItemCandidates) {
+    for (const sid of row.byStore.keys()) storeIds.add(sid);
   }
   if (storeIds.size === 0) return null;
 
-  const storeInfo = await prisma.store.findMany({
-    where: { id: { in: [...storeIds] }, userId },
-  });
-  const storeMap = new Map(storeInfo.map((s) => [s.id, { name: s.name, address: s.address }]));
+  /** Use store rows already joined on receipt lines. A second Store query filtered by userId could drop valid stores if data ever diverged. */
+  const storeMap = new Map<string, { name: string; address: string | null }>();
+  for (const hi of historicalItems) {
+    const sid = hi.receipt.storeId;
+    if (!storeIds.has(sid) || storeMap.has(sid)) continue;
+    storeMap.set(sid, { name: hi.receipt.store.name, address: hi.receipt.store.address });
+  }
+  for (const sid of storeIds) {
+    if (!storeMap.has(sid)) {
+      const row = await prisma.store.findFirst({ where: { id: sid, userId } });
+      if (row) storeMap.set(sid, { name: row.name, address: row.address });
+    }
+  }
 
-  let bestStoreId: string | null = null;
-  let bestStoreTotal = Infinity;
-  let bestItemBreakdown: BasketItemPrice[] = [];
+  type StoreEval = {
+    storeId: string;
+    hasAllItems: boolean;
+    storeTotal: number;
+    evidenceScore: number;
+    breakdown: BasketItemPrice[];
+    covered: number;
+    strongCount: number;
+    weakCount: number;
+  };
 
-  for (const storeId of storeIds) {
+  function evalStore(storeId: string): StoreEval | null {
     const info = storeMap.get(storeId);
-    if (!info) continue;
+    if (!info) return null;
 
     let storeTotal = 0;
+    let evidenceScore = 0;
+    let covered = 0;
+    let strongCount = 0;
+    let weakCount = 0;
     const breakdown: BasketItemPrice[] = [];
-
     let hasAllItems = true;
-    for (const lip of listItemPrices) {
-      const atStore = lip.pricesPerStore.find((p) => p.storeId === storeId);
-      const unitPrice = atStore ? atStore.unitPrice : Infinity;
-      if (!atStore) hasAllItems = false;
-      const totalPrice = unitPrice !== Infinity ? lip.quantity * unitPrice : 0;
+
+    for (const row of listItemCandidates) {
+      const cand = row.byStore.get(storeId);
+      if (!cand) {
+        hasAllItems = false;
+        breakdown.push({
+          itemName: row.name,
+          quantity: row.quantity,
+          unitPrice: 0,
+          totalPrice: 0,
+          storeName: info.name,
+        });
+        continue;
+      }
+      covered++;
+      const w = cand.matchScore * tierToNumericWeight(cand.tier) * recencyMultiplier(cand.receiptDate);
+      evidenceScore += w;
+      if (cand.tier === "strong") strongCount++;
+      else if (cand.tier === "weak") weakCount++;
+
+      const totalPrice = row.quantity * cand.unitPrice;
       storeTotal += totalPrice;
       breakdown.push({
-        itemName: lip.name,
-        quantity: lip.quantity,
-        unitPrice: unitPrice === Infinity ? 0 : unitPrice,
+        itemName: row.name,
+        quantity: row.quantity,
+        unitPrice: cand.unitPrice,
         totalPrice,
         storeName: info.name,
       });
     }
 
-    if (hasAllItems && storeTotal < bestStoreTotal && storeTotal > 0) {
-      bestStoreTotal = storeTotal;
-      bestStoreId = storeId;
-      bestItemBreakdown = breakdown;
-    }
+    return {
+      storeId,
+      hasAllItems,
+      storeTotal,
+      evidenceScore,
+      breakdown,
+      covered,
+      strongCount,
+      weakCount,
+    };
   }
 
-  if (bestStoreId === null) return null;
+  const evaluations: StoreEval[] = [];
+  for (const sid of storeIds) {
+    const ev = evalStore(sid);
+    if (ev && ev.covered > 0) evaluations.push(ev);
+  }
+  if (evaluations.length === 0) return null;
 
-  const theoreticalMinimum = listItemPrices.reduce((sum, lip) => {
-    if (lip.pricesPerStore.length === 0) return sum;
-    const minUnit = Math.min(...lip.pricesPerStore.map((p) => p.unitPrice));
-    return sum + lip.quantity * minUnit;
+  /** Rank: prefer higher evidence score, then lower subtotal for same coverage band */
+  function rankFull(a: StoreEval, b: StoreEval): number {
+    if (a.hasAllItems !== b.hasAllItems) return a.hasAllItems ? -1 : 1;
+    const evDiff = b.evidenceScore - a.evidenceScore;
+    if (Math.abs(evDiff) > 0.08) return evDiff;
+    return a.storeTotal - b.storeTotal;
+  }
+
+  const fullCandidates = evaluations
+    .filter((e) => e.hasAllItems && e.covered > 0)
+    .sort((a, b) => rankFull(a, b));
+
+  let chosen: StoreEval | null = fullCandidates[0] ?? null;
+  let usedPartialFallback = false;
+
+  if (!chosen) {
+    usedPartialFallback = true;
+    const maxCov = Math.max(...evaluations.map((e) => e.covered));
+    const partialPool = evaluations.filter((e) => e.covered === maxCov && e.covered > 0);
+    partialPool.sort((a, b) => {
+      const evDiff = b.evidenceScore - a.evidenceScore;
+      if (Math.abs(evDiff) > 0.06) return evDiff;
+      return a.storeTotal - b.storeTotal;
+    });
+    chosen = partialPool[0] ?? null;
+  }
+
+  if (!chosen) return null;
+
+  const bestStore = storeMap.get(chosen.storeId)!;
+  const itemsCoveredAtStore = chosen.covered;
+  const basketItemCount = listItems.length;
+  const partialMatch = usedPartialFallback || itemsCoveredAtStore < basketItemCount;
+
+  let matchQuality: "strong" | "mixed" | "weak" = "mixed";
+  if (chosen.strongCount >= Math.ceil(chosen.covered * 0.6) && chosen.weakCount <= 1) matchQuality = "strong";
+  else if (chosen.weakCount >= Math.ceil(chosen.covered * 0.45)) matchQuality = "weak";
+
+  const evidenceSummary = partialMatch
+    ? `Partial trip: ${itemsCoveredAtStore} of ${basketItemCount} lines matched at this store with ${matchQuality} confidence (receipt history + recency).`
+    : `Full basket at this store: ${matchQuality} match quality from your receipts (weighted by strength and how recent prices are).`;
+
+  const theoreticalMinimumFixed = listItemCandidates.reduce((sum, row, idx) => {
+    const li = listItems[idx];
+    const prices = [...row.byStore.values()].map((c) => c.unitPrice);
+    if (prices.length === 0) return sum;
+    return sum + li.quantity * Math.min(...prices);
   }, 0);
 
-  const bestStore = storeMap.get(bestStoreId)!;
-
   return {
-    bestStoreId,
+    bestStoreId: chosen.storeId,
     bestStoreName: bestStore.name,
     bestStoreAddress: bestStore.address,
-    estimatedTotal: bestStoreTotal,
-    theoreticalMinimum,
-    estimatedSavings: Math.max(0, theoreticalMinimum - bestStoreTotal),
-    itemBreakdown: bestItemBreakdown,
+    estimatedTotal: chosen.storeTotal,
+    theoreticalMinimum: theoreticalMinimumFixed,
+    estimatedSavings: Math.max(0, theoreticalMinimumFixed - chosen.storeTotal),
+    itemBreakdown: chosen.breakdown,
+    partialMatch: partialMatch || itemsCoveredAtStore < basketItemCount,
+    itemsCoveredAtStore,
+    basketItemCount,
+    evidenceSummary,
+    matchQuality,
   };
 }

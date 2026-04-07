@@ -108,8 +108,9 @@ function ReceiptThumbnail({
   const isBackend = isBackendReceiptImageUrl(imageUrl);
 
   useEffect(() => {
-    if (!isBackend || !authToken) return;
+    if (!isBackend) return;
     setLoading(true);
+    // idToken may be null (guest); API client falls back to dev-token in development.
     getReceiptImageDataUri(authToken, receiptId)
       .then(setDataUri)
       .finally(() => setLoading(false));
@@ -239,7 +240,7 @@ export default function LibraryModal() {
   );
 
   useEffect(() => {
-    if (!detailReceipt || !authToken) {
+    if (!detailReceipt) {
       setDetailImageUri(null);
       return;
     }

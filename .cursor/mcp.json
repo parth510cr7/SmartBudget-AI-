@@ -1,0 +1,31 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "url": "https://mcp.supabase.com/mcp?project_ref=gdgmczdlntwjwenpnmse"
+    },
+    "Prisma-Local": {
+      "command": "npx",
+      "args": ["-y", "prisma", "mcp"],
+      "cwd": "backend"
+    },
+    "Prisma-Remote": {
+      "url": "https://mcp.prisma.io/mcp"
+    },
+    "firebase": {
+      "command": "npx",
+      "args": ["-y", "firebase-tools@latest", "mcp"]
+    },
+    "github": {
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer YOUR_GITHUB_PAT"
+      }
+    },
+    "sentry": {
+      "url": "https://mcp.sentry.dev/mcp"
+    },
+    "linear": {
+      "url": "https://mcp.linear.app/mcp"
+    }
+  }
+}

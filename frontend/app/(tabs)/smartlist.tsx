@@ -1,132 +1,174 @@
-import { useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from "react-native";
+import { useCallback, useState } from "react";
 import {
-  ShoppingCart,
-  Home,
-  Shield,
-  Tv,
-  Smartphone,
-  CreditCard,
-  Plus,
-} from "lucide-react-native";
-
-const CATEGORIES = [
-  {
-    title: "Grocery List",
-    items: [
-      { label: "Produce", icon: ShoppingCart },
-      { label: "Dairy", icon: ShoppingCart },
-      { label: "Pantry", icon: ShoppingCart },
-    ],
-  },
-  {
-    title: "Household (EMI/Ins)",
-    items: [
-      { label: "EMI", icon: Home },
-      { label: "Insurance", icon: Shield },
-    ],
-  },
-  {
-    title: "Subscriptions (Netflix/Recharge)",
-    items: [
-      { label: "Netflix", icon: Tv },
-      { label: "Recharge", icon: Smartphone },
-    ],
-  },
-  {
-    title: "Extra Costs",
-    items: [
-      { label: "Dining out", icon: CreditCard },
-      { label: "Fuel", icon: CreditCard },
-      { label: "Misc", icon: CreditCard },
-    ],
-  },
-];
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  ActivityIndicator,
+  Alert,
+} from "react-native";
+import { useFocusEffect, useRouter } from "expo-router";
+import { ListChecks, ChevronRight, Search, Trash2 } from "lucide-react-native";
+import { useStore } from "../../src/store/useStore";
+import { getTheme, IOS_BLUE, IOS_GREEN, IOS_RED } from "../../src/theme";
+import { getSmartLists, deleteSmartList, type SmartListRow } from "../../src/api/client";
 
 export default function SmartListScreen() {
-  const [manualCategories, setManualCategories] = useState<string[]>([]);
+  const isDarkMode = useStore((s) => s.isDarkMode ?? false);
+  const authToken = useStore((s) => (s.user as { idToken?: string } | null)?.idToken ?? null);
+  const setBasket = useStore((s) => s.setBasket);
+  const { bg, glass, textPrimary, textSecondary } = getTheme(isDarkMode);
+  const router = useRouter();
+  const [lists, setLists] = useState<SmartListRow[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  function addManualChoice() {
-    setManualCategories((prev) => [...prev, `Custom ${prev.length + 1}`]);
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await getSmartLists(authToken ?? null);
+      setLists(Array.isArray(data) ? data : []);
+    } catch {
+      setLists([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [authToken]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+    }, [refresh])
+  );
+
+  function loadIntoBasket(list: SmartListRow) {
+    const names = list.items.map((i) => i.name.trim()).filter(Boolean);
+    setBasket(names.length > 0 ? names : []);
+    router.push({ pathname: "/(tabs)/insights", params: { freshBasket: "1" } });
+  }
+
+  function confirmDelete(list: SmartListRow) {
+    Alert.alert("Delete saved basket", `Remove "${list.name}"?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await deleteSmartList(authToken ?? null, list.id);
+            setLists((prev) => prev.filter((x) => x.id !== list.id));
+          } catch (e) {
+            Alert.alert("Error", e instanceof Error ? e.message : "Could not delete");
+          }
+        },
+      },
+    ]);
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Smart List</Text>
-      <Text style={styles.subtitle}>Categories</Text>
+    <ScrollView style={[styles.container, { backgroundColor: bg }]} contentContainerStyle={styles.content}>
+      <Text style={[styles.title, { color: textPrimary }]}>Saved lists</Text>
+      <Text style={[styles.subtitle, { color: textSecondary }]}>
+        Lists you saved from Search → your basket → Save. Tap a row to load it into your basket and open Search, or use
+        the button below for Load saved and Finalize.
+      </Text>
 
-      {CATEGORIES.map((cat) => (
-        <View key={cat.title} style={styles.section}>
-          <Text style={styles.sectionTitle}>{cat.title}</Text>
-          <View style={styles.chipRow}>
-            {cat.items.map((item) => {
-              const Icon = item.icon;
-              return (
-                <TouchableOpacity key={item.label} style={styles.chip}>
-                  <Icon size={18} color="#4F46E5" />
-                  <Text style={styles.chipText}>{item.label}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+      <TouchableOpacity
+        style={[styles.linkRow, { backgroundColor: glass, borderColor: "rgba(255,255,255,0.5)" }]}
+        onPress={() => router.push("/(tabs)/insights")}
+        activeOpacity={0.8}
+      >
+        <Search size={22} color={IOS_BLUE} />
+        <View style={styles.linkTextWrap}>
+          <Text style={[styles.linkTitle, { color: textPrimary }]}>Search (Insights)</Text>
+          <Text style={[styles.linkSub, { color: textSecondary }]}>Load saved, add items, Finalize</Text>
         </View>
-      ))}
-
-      {manualCategories.length > 0 && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Manual</Text>
-          <View style={styles.chipRow}>
-            {manualCategories.map((label) => (
-              <TouchableOpacity key={label} style={styles.chip}>
-                <Text style={styles.chipText}>{label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      )}
-
-      <TouchableOpacity style={styles.manualBtn} onPress={addManualChoice}>
-        <Plus size={22} color="#4F46E5" />
-        <Text style={styles.manualBtnText}>Manual Choice</Text>
+        <ChevronRight size={22} color={textSecondary} />
       </TouchableOpacity>
+
+      {loading ? (
+        <ActivityIndicator size="small" color={IOS_BLUE} style={styles.spinner} />
+      ) : lists.length === 0 ? (
+        <View style={[styles.emptyCard, { backgroundColor: glass }]}>
+          <Text style={[styles.emptyText, { color: textSecondary }]}>
+            No saved lists yet. On the Search tab, add items to your basket and tap Save.
+          </Text>
+        </View>
+      ) : (
+        lists.map((list) => (
+          <View key={list.id} style={[styles.listRow, { backgroundColor: glass, borderColor: "rgba(255,255,255,0.5)" }]}>
+            <TouchableOpacity style={styles.listRowMain} onPress={() => loadIntoBasket(list)} activeOpacity={0.8}>
+              <ListChecks size={20} color={IOS_BLUE} />
+              <View style={styles.listTextWrap}>
+                <Text style={[styles.listName, { color: textPrimary }]} numberOfLines={1}>
+                  {list.name}
+                </Text>
+                {list.estimatedTotalSnapshot != null &&
+                typeof list.estimatedTotalSnapshot === "number" &&
+                Number.isFinite(list.estimatedTotalSnapshot) ? (
+                  <Text style={styles.listEstimate}>Est. ${list.estimatedTotalSnapshot.toFixed(2)}</Text>
+                ) : null}
+                <Text style={[styles.listMeta, { color: textSecondary }]}>
+                  {list.items.length} item{list.items.length === 1 ? "" : "s"} · Tap to load basket
+                </Text>
+              </View>
+              <ChevronRight size={20} color={textSecondary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              accessibilityLabel={`Delete ${list.name}`}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              onPress={() => confirmDelete(list)}
+              style={styles.listDeleteBtn}
+            >
+              <Trash2 size={18} color={IOS_RED} />
+            </TouchableOpacity>
+          </View>
+        ))
+      )}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F9FAFB" },
+  container: { flex: 1 },
   content: { padding: 24, paddingBottom: 40 },
-  title: { fontSize: 24, fontWeight: "700", color: "#111827", marginBottom: 4 },
-  subtitle: { fontSize: 14, color: "#6B7280", marginBottom: 20 },
-  section: { marginBottom: 24 },
-  sectionTitle: { fontSize: 15, fontWeight: "600", color: "#374151", marginBottom: 10 },
-  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  chip: {
+  title: { fontSize: 24, fontWeight: "700", marginBottom: 8 },
+  subtitle: { fontSize: 14, lineHeight: 20, marginBottom: 20 },
+  linkRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    backgroundColor: "#FFFFFF",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    gap: 12,
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginBottom: 20,
   },
-  chipText: { fontSize: 14, fontWeight: "500", color: "#374151" },
-  manualBtn: {
+  linkTextWrap: { flex: 1 },
+  linkTitle: { fontSize: 16, fontWeight: "600" },
+  linkSub: { fontSize: 13, marginTop: 2 },
+  spinner: { marginTop: 24 },
+  emptyCard: { padding: 20, borderRadius: 16 },
+  emptyText: { fontSize: 14, lineHeight: 20 },
+  listRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginBottom: 12,
+    overflow: "hidden",
+  },
+  listRowMain: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: 16,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: "#4F46E5",
-    borderStyle: "dashed",
-    marginTop: 8,
+    paddingLeft: 16,
+    paddingRight: 8,
+    gap: 4,
   },
-  manualBtnText: { fontSize: 16, fontWeight: "600", color: "#4F46E5" },
+  listDeleteBtn: { paddingVertical: 16, paddingRight: 16, paddingLeft: 4, justifyContent: "center" },
+  listTextWrap: { flex: 1, marginLeft: 12 },
+  listName: { fontSize: 16, fontWeight: "600" },
+  listEstimate: { fontSize: 12, fontWeight: "600", marginTop: 4, color: IOS_GREEN },
+  listMeta: { fontSize: 13, marginTop: 4 },
 });

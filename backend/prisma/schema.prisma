@@ -49,6 +49,21 @@ model User {
 
   householdOwned        Household?            @relation("HouseholdOwner")
   householdMemberships  HouseholdMember[]
+  basketTermPreferences BasketTermPreference[]
+}
+
+/// Learned mapping: user typed broad term (termKey) and chose a specific receipt-style label.
+model BasketTermPreference {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  termKey     String
+  pickedLabel String
+  pickCount   Int      @default(1)
+  lastPickedAt DateTime @default(now())
+
+  @@unique([userId, termKey, pickedLabel])
+  @@index([userId, termKey])
 }
 
 model Store {
@@ -160,6 +175,8 @@ model SmartList {
   userId    String
   user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   name      String
+  /** Best known estimated total when the list was saved (from Search / Finalize). */
+  estimatedTotalSnapshot Float?
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
   items     SmartListItem[]

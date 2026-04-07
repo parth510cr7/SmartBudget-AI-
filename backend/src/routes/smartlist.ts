@@ -43,11 +43,23 @@ router.post("/", async (req: AuthRequest, res: Response) => {
       res.status(404).json({ error: "User not found" });
       return;
     }
-    const body = req.body as { name?: string; items?: { name: string; quantity?: number }[] };
+    const body = req.body as {
+      name?: string;
+      estimatedTotalSnapshot?: unknown;
+      items?: { name: string; quantity?: number }[];
+    };
     const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : "Shopping list";
     const rawItems = Array.isArray(body.items) ? body.items : [];
+    let estimatedTotalSnapshot: number | undefined;
+    if (typeof body.estimatedTotalSnapshot === "number" && Number.isFinite(body.estimatedTotalSnapshot)) {
+      estimatedTotalSnapshot = body.estimatedTotalSnapshot;
+    }
     const list = await prisma.smartList.create({
-      data: { userId: user.id, name },
+      data: {
+        userId: user.id,
+        name,
+        ...(estimatedTotalSnapshot !== undefined ? { estimatedTotalSnapshot } : {}),
+      },
     });
     if (rawItems.length > 0) {
       await prisma.smartListItem.createMany({
@@ -65,6 +77,34 @@ router.post("/", async (req: AuthRequest, res: Response) => {
     res.status(201).json(withItems);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to create smart list";
+    res.status(500).json({ error: message });
+  }
+});
+
+router.delete("/:id", async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.auth) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const smartListId = typeof req.params.id === "string" ? req.params.id : req.params.id[0];
+    const user = await prisma.user.findUnique({
+      where: { firebaseId: req.auth.uid },
+    });
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+    const deleted = await prisma.smartList.deleteMany({
+      where: { id: smartListId, userId: user.id },
+    });
+    if (deleted.count === 0) {
+      res.status(404).json({ error: "List not found" });
+      return;
+    }
+    res.status(204).send();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to delete list";
     res.status(500).json({ error: message });
   }
 });
