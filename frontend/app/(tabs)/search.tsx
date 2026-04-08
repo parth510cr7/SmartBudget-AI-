@@ -8,6 +8,16 @@ import { appQuery, getApiBase, healthCheck, getBasketInsights, getBasketSuggesti
 
 type QueryResult = { answer: string; data?: Record<string, unknown>; meta?: { requestId: string; apiVersion: string } };
 
+function cleanAnswer(s: string): string {
+  const text = (s ?? "").toString();
+  // Strip fenced code blocks if the backend/LLM returns them.
+  const noFences = text.replace(/```[\s\S]*?```/g, "").trim();
+  // Collapse excessive blank lines.
+  const collapsed = noFences.replace(/\n{3,}/g, "\n\n").trim();
+  // Guard against huge payloads breaking UI.
+  return collapsed.length > 1800 ? `${collapsed.slice(0, 1800).trim()}…` : collapsed;
+}
+
 function safeJson(v: unknown): string {
   try {
     return JSON.stringify(v, null, 2);
@@ -31,6 +41,7 @@ export default function SearchScreen() {
   const basket = useStore((s) => s.basket ?? []);
   const setBasket = useStore((s) => s.setBasket);
 
+  const [debug, setDebug] = useState(false);
   const [apiStatus, setApiStatus] = useState<{ status: string } | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
 
@@ -120,6 +131,20 @@ export default function SearchScreen() {
         </Text>
 
         <View style={[styles.card, { backgroundColor: glass }, SHADOW.card]}>
+          <View style={styles.headerRow}>
+            <Text style={[styles.sectionTitleInline, { color: textPrimary }]}>Ask anything</Text>
+            <TouchableOpacity
+              onPress={() => setDebug((v) => !v)}
+              style={[
+                styles.debugPill,
+                { borderColor: debug ? IOS_BLUE : "rgba(255,255,255,0.2)", backgroundColor: debug ? "rgba(10,132,255,0.12)" : "transparent" },
+              ]}
+              hitSlop={8}
+            >
+              <Text style={[styles.debugPillText, { color: debug ? IOS_BLUE : textSecondary }]}>{debug ? "Debug: ON" : "Debug"}</Text>
+            </TouchableOpacity>
+          </View>
+
           <View style={styles.row}>
             <Search size={18} color={textSecondary} />
             <TextInput
@@ -159,10 +184,10 @@ export default function SearchScreen() {
                 <Sparkles size={18} color={result.answer.toLowerCase().includes("error") ? IOS_RED : IOS_GREEN} />
                 <Text style={[styles.resultTitle, { color: textPrimary }]}>Result</Text>
                 <Text style={[styles.resultMeta, { color: textSecondary }]} numberOfLines={1}>
-                  {result.meta?.requestId ? `req ${result.meta.requestId}` : ""}
+                  {debug && result.meta?.requestId ? `req ${result.meta.requestId}` : ""}
                 </Text>
               </View>
-              <Text style={[styles.answer, { color: textPrimary }]}>{result.answer}</Text>
+              <Text style={[styles.answer, { color: textPrimary }]}>{cleanAnswer(result.answer)}</Text>
 
               {Array.isArray((result.data as any)?.byCategory) ? (
                 <View style={{ marginTop: 12 }}>
@@ -178,10 +203,14 @@ export default function SearchScreen() {
                 </View>
               ) : null}
 
-              <Text style={[styles.smallHeader, { color: textSecondary, marginTop: 12 }]}>Raw data</Text>
-              <Text style={[styles.mono, { color: textSecondary }]} selectable>
-                {safeJson(result.data ?? {})}
-              </Text>
+              {debug ? (
+                <>
+                  <Text style={[styles.smallHeader, { color: textSecondary, marginTop: 12 }]}>Raw data</Text>
+                  <Text style={[styles.mono, { color: textSecondary }]} selectable>
+                    {safeJson(result.data ?? {})}
+                  </Text>
+                </>
+              ) : null}
             </View>
           ) : null}
         </View>
@@ -280,10 +309,16 @@ export default function SearchScreen() {
 
           {basketInsights ? (
             <View style={{ marginTop: 12 }}>
-              <Text style={[styles.smallHeader, { color: textSecondary }]}>Finalize response</Text>
-              <Text style={[styles.mono, { color: textSecondary }]} selectable>
-                {safeJson(basketInsights)}
-              </Text>
+              <Text style={[styles.smallHeader, { color: textSecondary }]}>Finalize</Text>
+              {debug ? (
+                <Text style={[styles.mono, { color: textSecondary }]} selectable>
+                  {safeJson(basketInsights)}
+                </Text>
+              ) : (
+                <Text style={[styles.sectionHint, { color: textSecondary }]}>
+                  Done. If something looks off, enable Debug to see the response payload.
+                </Text>
+              )}
             </View>
           ) : null}
         </View>
@@ -306,6 +341,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.18)",
   },
+  headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+  sectionTitleInline: { fontSize: TYPE.secondary, fontWeight: "700" },
+  debugPill: { paddingVertical: 7, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1 },
+  debugPillText: { fontSize: TYPE.helper, fontWeight: "800" },
   sectionTitle: { fontSize: TYPE.sectionTitle, fontWeight: "700", marginBottom: 6 },
   sectionHint: { fontSize: TYPE.secondary, marginBottom: 10 },
   row: { flexDirection: "row", alignItems: "center", gap: 10 },

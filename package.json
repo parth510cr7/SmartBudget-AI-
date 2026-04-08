@@ -3,6 +3,8 @@
   "private": true,
   "description": "Root scripts only; app code lives in backend/ and frontend/",
   "scripts": {
-    "verify": "node scripts/verify-dev-tooling.mjs"
+    "verify": "node scripts/verify-dev-tooling.mjs",
+    "qa:smoke": "node scripts/qa-smoke.mjs",
+    "qa:backend:test": "npm --prefix backend test"
   }
 }
