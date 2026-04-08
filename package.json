@@ -5,6 +5,7 @@
   "scripts": {
     "verify": "node scripts/verify-dev-tooling.mjs",
     "qa:smoke": "node scripts/qa-smoke.mjs",
-    "qa:backend:test": "npm --prefix backend test"
+    "qa:backend:test": "npm --prefix backend test",
+    "qa:loop": "powershell -ExecutionPolicy Bypass -File scripts/qa-loop.ps1"
   }
 }
