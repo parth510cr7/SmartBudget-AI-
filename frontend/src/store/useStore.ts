@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { LocationConsentState } from "../lib/locationConsent";
+import type { OverpaidInsightPayload } from "../api/client";
 
 export type ThemeMode = "light" | "dark" | "system";
 
@@ -39,6 +40,9 @@ interface AppStore {
   /** Location consent for nearby community pricing. Load from AsyncStorage when needed. */
   locationConsent: LocationConsentState | null;
   setLocationConsent: (state: LocationConsentState | null) => void;
+  /** Latest scan insight (Home banner); cleared when dismissed. */
+  lastReceiptInsight: OverpaidInsightPayload | null;
+  setLastReceiptInsight: (value: OverpaidInsightPayload | null) => void;
 }
 
 export const useStore = create<AppStore>((set) => ({
@@ -54,6 +58,8 @@ export const useStore = create<AppStore>((set) => ({
   setExpensePrefill: (value) => set({ expensePrefill: value }),
   locationConsent: null,
   setLocationConsent: (state) => set({ locationConsent: state }),
+  lastReceiptInsight: null,
+  setLastReceiptInsight: (value) => set({ lastReceiptInsight: value }),
   setUser: (user) => set({ user }),
   setTheme: (theme) => set({ theme }),
   setDarkMode: (value) => set({ isDarkMode: value, theme: value ? "dark" : "light" }),

@@ -10,3 +10,13 @@ node_modules/
 dist/
 .expo/
 *.log
+.cursor/
+.agents/
+agent-transcripts/
+frontend/dist-export-test/
+firebase-public/
+tools/metagpt/.venv*/
+tools/metagpt/.venv*/
+tools/metagpt/.venv311/
+tools/metagpt/.venv_metagpt/
+**/.DS_Store

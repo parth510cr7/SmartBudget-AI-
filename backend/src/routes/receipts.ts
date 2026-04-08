@@ -11,6 +11,7 @@ import { ALL_CATEGORY_NAMES } from "../config/categories";
 import { saveUserRule, type CategoryName } from "../receipt_engine/aiCategorizer";
 import { parseReceiptDate } from "../receipt_engine/dateParser";
 import { ReceiptVisibility } from "@prisma/client";
+import { getOverpaidInsight } from "../services/overpaidInsightService";
 
 const router = Router();
 
@@ -214,6 +215,33 @@ router.get("/:id/image", async (req: AuthRequest, res: Response) => {
     res.send(buf);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load image";
+    res.status(500).json({ error: message });
+  }
+});
+
+/** GET /:id/overpaid-insight — savings vs your history + staple benchmarks (MVP). */
+router.get("/:id/overpaid-insight", async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.auth) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const user = await prisma.user.findUnique({
+      where: { firebaseId: req.auth.uid },
+    });
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const insight = await getOverpaidInsight(user.id, id);
+    if (!insight) {
+      res.status(404).json({ error: "Receipt not found" });
+      return;
+    }
+    res.status(200).json(insight);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Overpaid insight failed";
     res.status(500).json({ error: message });
   }
 });
@@ -919,129 +947,6 @@ router.patch("/:id/group", async (req: AuthRequest, res: Response) => {
     res.status(200).json({ success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Update failed";
-    res.status(500).json({ error: message });
-  }
-});
-
-/** Keywords that suggest an item is prescription/drug (for "Add to medical" suggestions). */
-const RX_ITEM_PATTERNS = [
-  /\b(?:rx|prescription|medication|medicine|drug|tablet|tablets|capsule|capsules|mg\b|ml\b|pharmacy|antibiotic|insulin|metformin|amlodipine|lisinopril|atorvastatin|omeprazole|levothyroxine|amlodipine|gabapentin|hydrochlorothiazide|losartan|sertraline|escitalopram|tramadol|prednisone|albuterol|fluticasone|advair|symbicort|creon|synthroid)\b/i,
-  /\b\d+\s*mg\b/i,
-  /\b\d+\s*(?:tablet|cap|pill)s?\b/i,
-];
-
-function looksLikeRxItem(name: string): boolean {
-  const n = (name ?? "").trim().toLowerCase();
-  if (n.length < 2) return false;
-  return RX_ITEM_PATTERNS.some((re) => re.test(n));
-}
-
-/** GET /:id/medical-suggestions — suggest which receipt items look like Rx/drugs (for "Add to medical" flow). */
-router.get("/:id/medical-suggestions", async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.auth) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-    const user = await prisma.user.findUnique({
-      where: { firebaseId: req.auth.uid },
-    });
-    if (!user) {
-      res.status(404).json({ error: "User not found" });
-      return;
-    }
-    const receiptId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    const receipt = await prisma.receipt.findFirst({
-      where: { id: receiptId, userId: user.id },
-      include: { store: true, items: true },
-    });
-    if (!receipt) {
-      res.status(404).json({ error: "Receipt not found" });
-      return;
-    }
-    const rxItemIds = receipt.items
-      .filter((it) => looksLikeRxItem(it.name ?? it.rawName ?? ""))
-      .map((it) => it.id);
-    const storeName = receipt.store?.name ?? null;
-    const isPharmacyLike = /pharmacy|drug|walgreens|cvs|rite.?aid|health|medical/i.test(storeName ?? "");
-    res.json({
-      receiptId: receipt.id,
-      storeName,
-      isPharmacyLike,
-      rxItemIds,
-      allItemIds: receipt.items.map((it) => it.id),
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to get suggestions";
-    res.status(500).json({ error: message });
-  }
-});
-
-/** POST /:id/add-to-medical — create medical expenses from selected receipt items and attach to a folder (patient). */
-router.post("/:id/add-to-medical", async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.auth) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-    const user = await prisma.user.findUnique({
-      where: { firebaseId: req.auth.uid },
-    });
-    if (!user) {
-      res.status(404).json({ error: "User not found" });
-      return;
-    }
-    const receiptId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    const folderId = typeof req.body?.folderId === "string" ? req.body.folderId.trim() : "";
-    const itemIds = Array.isArray(req.body?.itemIds)
-      ? (req.body.itemIds as unknown[]).filter((id): id is string => typeof id === "string" && id.trim() !== "")
-      : [];
-    if (!folderId) {
-      res.status(400).json({ error: "folderId is required" });
-      return;
-    }
-    const folder = await prisma.medicalFolder.findFirst({
-      where: { id: folderId, userId: user.id },
-    });
-    if (!folder) {
-      res.status(404).json({ error: "Medical folder not found" });
-      return;
-    }
-    const receipt = await prisma.receipt.findFirst({
-      where: { id: receiptId, userId: user.id },
-      include: { store: true, items: true },
-    });
-    if (!receipt) {
-      res.status(404).json({ error: "Receipt not found" });
-      return;
-    }
-    const storeName = receipt.store?.name ?? null;
-    const receiptDate = receipt.date;
-    const itemIdsSet = new Set(itemIds);
-    const itemsToAdd = itemIds.length > 0
-      ? receipt.items.filter((it) => itemIdsSet.has(it.id))
-      : receipt.items;
-    if (itemsToAdd.length === 0) {
-      res.status(400).json({ error: "No items to add. Select at least one item or send empty itemIds to add all." });
-      return;
-    }
-    const created = await prisma.medicalExpense.createMany({
-      data: itemsToAdd.map((it) => ({
-        folderId,
-        itemName: it.name ?? it.rawName ?? "Item",
-        price: Number(it.totalPrice) || 0,
-        date: receiptDate,
-        storeName: storeName ?? undefined,
-      })),
-    });
-    res.status(201).json({
-      success: true,
-      folderId,
-      patientName: folder.patientName,
-      addedCount: created.count,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to add to medical";
     res.status(500).json({ error: message });
   }
 });

@@ -1,0 +1,22 @@
+.git
+**/node_modules
+
+# Cursor / agent files (may contain Windows symlinks)
+.agents
+.cursor
+
+# Local artifacts
+**/*.log
+**/dist
+**/build
+**/.expo
+
+# Large local folders not needed for builds
+frontend/dist-export-test
+firebase-public
+tools/metagpt
+tools/**/.venv*
+tools/**/.venv_*
+**/.venv*
+**/.venv_*
+

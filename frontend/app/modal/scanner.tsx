@@ -11,6 +11,7 @@ import {
   postReceiptFromLocal,
   postReceiptFromProcessText,
   getMyHousehold,
+  getReceiptOverpaidInsight,
   type ReceiptVisibilityType,
 } from "../../src/api/client";
 import { useStore } from "../../src/store/useStore";
@@ -37,6 +38,20 @@ const OCR_MIN_CHARS = 150;
 const OCR_MIN_LINES = 5;
 
 const OCR_LOG_PREFIX = "[ReceiptScan]";
+
+async function attachOverpaidInsight(authToken: string | null, res: unknown) {
+  const id =
+    typeof res === "object" && res && "id" in res && typeof (res as { id: unknown }).id === "string"
+      ? (res as { id: string }).id
+      : null;
+  if (!id) return;
+  try {
+    const insight = await getReceiptOverpaidInsight(authToken, id);
+    useStore.getState().setLastReceiptInsight(insight);
+  } catch {
+    /* non-fatal */
+  }
+}
 
 function getImageDimensions(uri: string): Promise<{ width: number; height: number } | null> {
   return new Promise((resolve) => {
@@ -139,7 +154,8 @@ export default function ScannerModal() {
   /** Get locally verified store/total/date from image when on-device OCR is available. */
   async function getLocalExtractFromImage(base64: string): Promise<{ storeName: string; total: number; date?: string } | null> {
     try {
-      const rawText = await getRawTextFromImage(base64);
+      const meta = await getRawTextFromImageWithMeta(base64);
+      const rawText = meta.text;
       if (!rawText) return null;
       const parsed = parseReceiptText(rawText);
       if (parsed.locallyVerified && parsed.storeName != null && parsed.total != null)
@@ -190,18 +206,20 @@ export default function ScannerModal() {
         setProcessingStatus("on-device");
         const pipelineResult = await runOnDevicePipeline(rawText);
         if (pipelineResult?.confident) {
-          const category = getCategoryForStore(pipelineResult.storeName);
-          await postReceiptFromLocal(authToken, {
-            storeName: pipelineResult.storeName,
-            total: pipelineResult.total,
-            date: pipelineResult.date,
-            category,
-            visibilityType: saveTarget,
-            householdId: saveTarget === "household" ? household?.id : undefined,
-            image: base64 ?? undefined,
-          });
-          useStore.getState().setExpensePrefill({ description: pipelineResult.storeName.trim(), amount: pipelineResult.total, needsReview: false });
+          // IMPORTANT: saving via /from-local currently stores only a placeholder line item.
+          // To keep basket matching + finalize working, we must persist real line items.
+          // Use /process-text with raw OCR + image so backend can extract items (cloud fallback if needed).
+          const res = await postReceiptFromProcessText(
+            authToken,
+            rawText,
+            base64,
+            { visibilityType: saveTarget, householdId: saveTarget === "household" ? household?.id : undefined }
+          ) as { id?: string; store?: { name?: string }; total?: number; needsReview?: boolean };
+          const desc = (res?.store?.name ?? pipelineResult.storeName).trim() || "Receipt";
+          const amt = typeof res?.total === "number" && res.total > 0 ? res.total : pipelineResult.total;
+          if (amt > 0) useStore.getState().setExpensePrefill({ description: desc, amount: amt, needsReview: res?.needsReview });
           useStore.getState().triggerDashboardRefresh();
+          await attachOverpaidInsight(authToken, res);
           router.back();
           return;
         }
@@ -211,11 +229,12 @@ export default function ScannerModal() {
             rawText,
             base64,
             { visibilityType: saveTarget, householdId: saveTarget === "household" ? household?.id : undefined }
-          ) as { store?: { name?: string }; total?: number; needsReview?: boolean };
+          ) as { id?: string; store?: { name?: string }; total?: number; needsReview?: boolean };
           const desc = res?.store?.name?.trim() || "Receipt";
           const amt = typeof res?.total === "number" && res.total > 0 ? res.total : 0;
           if (amt > 0) useStore.getState().setExpensePrefill({ description: desc, amount: amt, needsReview: res?.needsReview });
           useStore.getState().triggerDashboardRefresh();
+          await attachOverpaidInsight(authToken, res);
           router.back();
           return;
         } catch (_) {
@@ -223,18 +242,18 @@ export default function ScannerModal() {
         }
         const parsed = parseReceiptText(rawText);
         if (parsed.locallyVerified && parsed.storeName != null && parsed.total != null) {
-          const category = getCategoryForStore(parsed.storeName);
-          await postReceiptFromLocal(authToken, {
-            storeName: parsed.storeName,
-            total: parsed.total,
-            date: parsed.date,
-            category,
-            visibilityType: saveTarget,
-            householdId: saveTarget === "household" ? household?.id : undefined,
-            image: base64 ?? undefined,
-          });
-          useStore.getState().setExpensePrefill({ description: parsed.storeName.trim(), amount: parsed.total, needsReview: false });
+          // Same reasoning as above: use /process-text so item lines exist for basket matching.
+          const res = await postReceiptFromProcessText(
+            authToken,
+            rawText,
+            base64,
+            { visibilityType: saveTarget, householdId: saveTarget === "household" ? household?.id : undefined }
+          ) as { id?: string; store?: { name?: string }; total?: number; needsReview?: boolean };
+          const desc = (res?.store?.name ?? parsed.storeName).trim() || "Receipt";
+          const amt = typeof res?.total === "number" && res.total > 0 ? res.total : parsed.total;
+          if (amt > 0) useStore.getState().setExpensePrefill({ description: desc, amount: amt, needsReview: res?.needsReview });
           useStore.getState().triggerDashboardRefresh();
+          await attachOverpaidInsight(authToken, res);
           router.back();
           return;
         }
@@ -248,11 +267,12 @@ export default function ScannerModal() {
         null,
         null,
         { visibilityType: saveTarget, householdId: saveTarget === "household" ? household?.id : undefined }
-      ) as { store?: { name?: string }; total?: number };
+      ) as { id?: string; store?: { name?: string }; total?: number; needsReview?: boolean };
       const desc = res?.store?.name?.trim() || "Receipt";
       const amt = typeof res?.total === "number" && res.total > 0 ? res.total : 0;
       if (amt > 0) useStore.getState().setExpensePrefill({ description: desc, amount: amt, needsReview: (res as { needsReview?: boolean })?.needsReview });
       useStore.getState().triggerDashboardRefresh();
+      await attachOverpaidInsight(authToken, res);
       router.back();
     } catch (e) {
       if (__DEV__) console.warn("Receipt API error", e);
@@ -356,43 +376,34 @@ export default function ScannerModal() {
           setProcessingStatus("on-device");
           const pipelineResult = await runOnDevicePipeline(rawText);
           if (pipelineResult?.confident) {
-            const category = getCategoryForStore(pipelineResult.storeName);
-            await postReceiptFromLocal(authToken, {
-              storeName: pipelineResult.storeName,
-              total: pipelineResult.total,
-              date: pipelineResult.date,
-              category,
+            const saved = await postReceiptFromProcessText(authToken, rawText, base64, {
               visibilityType: saveTarget,
               householdId: saveTarget === "household" ? household?.id : undefined,
-              image: base64 ?? undefined,
             });
             useStore.getState().triggerDashboardRefresh();
+            await attachOverpaidInsight(authToken, saved);
             done = true;
           }
           if (!done) {
             try {
-              await postReceiptFromProcessText(authToken, rawText, base64, {
+              const saved = await postReceiptFromProcessText(authToken, rawText, base64, {
                 visibilityType: saveTarget,
                 householdId: saveTarget === "household" ? household?.id : undefined,
               });
               useStore.getState().triggerDashboardRefresh();
+              await attachOverpaidInsight(authToken, saved);
               done = true;
             } catch (_) {}
           }
           if (!done) {
             const parsed = parseReceiptText(rawText);
             if (parsed.locallyVerified && parsed.storeName != null && parsed.total != null) {
-              const category = getCategoryForStore(parsed.storeName);
-              await postReceiptFromLocal(authToken, {
-                storeName: parsed.storeName,
-                total: parsed.total,
-                date: parsed.date,
-                category,
+              const saved = await postReceiptFromProcessText(authToken, rawText, base64, {
                 visibilityType: saveTarget,
                 householdId: saveTarget === "household" ? household?.id : undefined,
-                image: base64 ?? undefined,
               });
               useStore.getState().triggerDashboardRefresh();
+              await attachOverpaidInsight(authToken, saved);
               done = true;
             }
           }
@@ -403,7 +414,7 @@ export default function ScannerModal() {
             const localExtract = await getLocalExtractFromImage(base64);
             if (localExtract) {
               const category = getCategoryForStore(localExtract.storeName);
-              await postReceiptFromLocal(authToken, {
+              const saved = await postReceiptFromLocal(authToken, {
                 storeName: localExtract.storeName,
                 total: localExtract.total,
                 date: localExtract.date,
@@ -412,13 +423,16 @@ export default function ScannerModal() {
                 householdId: saveTarget === "household" ? household?.id : undefined,
                 image: base64 ?? undefined,
               });
+              useStore.getState().triggerDashboardRefresh();
+              await attachOverpaidInsight(authToken, saved);
             } else {
-              await postReceiptFromBase64(base64, authToken, asset.uri, null, null, {
+              const saved = await postReceiptFromBase64(base64, authToken, asset.uri, null, null, {
                 visibilityType: saveTarget,
                 householdId: saveTarget === "household" ? household?.id : undefined,
               });
+              useStore.getState().triggerDashboardRefresh();
+              await attachOverpaidInsight(authToken, saved);
             }
-            useStore.getState().triggerDashboardRefresh();
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : "Unknown error";

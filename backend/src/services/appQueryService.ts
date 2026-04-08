@@ -23,6 +23,13 @@ function round2(n: number): number {
 function detectIntent(q: string): string {
   const lower = q.toLowerCase().trim();
   if (!lower) return "general";
+  // Safety: explicit category queries should never route to store intent.
+  if (/\bcategory\b/.test(lower)) return "spend_by_category";
+  // Single short item-like query (e.g. "milk", "eggs") should use item lookup instead of generic summary.
+  if (lower.length <= 32 && !/\b(by|top|recent|group|shared|split)\b/.test(lower) && !/[?]/.test(lower)) {
+    const wordCount = lower.split(/\s+/).filter(Boolean).length;
+    if (wordCount <= 3 && /[a-z]/.test(lower)) return "item_lookup";
+  }
   // how much at [store] / spend at [store] (natural phrasing for single store)
   if (/\b(how much|spent|spend|spending)(?:\s+(?:did i|have i))?\s+at\s+/.test(lower)) return "spend_at_store";
   // spend by store / by store
@@ -89,13 +96,20 @@ export async function runAppQuery(userId: string, query: string): Promise<AppQue
     .map(([storeName, v]) => ({ storeName, totalSpent: round2(v.totalSpent), visits: v.visits }))
     .sort((a, b) => b.totalSpent - a.totalSpent);
 
-  // Build by-category aggregate (from line items)
+  // Build by-category aggregate (from priced line items, plus remainder into Other so it reconciles with totals)
   const categoryMap: Record<string, number> = {};
   for (const r of receipts) {
+    let attributed = 0;
     for (const item of r.items) {
-      const cat = item.category ?? "Other";
-      categoryMap[cat] = (categoryMap[cat] ?? 0) + Number(item.totalPrice);
+      const itemTotal = Number(item.totalPrice);
+      if (!Number.isFinite(itemTotal) || itemTotal <= 0) continue;
+      const cat = (item.category ?? "").trim() || "Other";
+      categoryMap[cat] = (categoryMap[cat] ?? 0) + itemTotal;
+      attributed += itemTotal;
     }
+    const receiptTotal = Number(r.total);
+    const remainder = Number.isFinite(receiptTotal) ? receiptTotal - attributed : 0;
+    if (remainder > 0.01) categoryMap["Other"] = (categoryMap["Other"] ?? 0) + remainder;
   }
   const byCategory = Object.entries(categoryMap)
     .map(([category, amount]) => ({ category, amount: round2(amount) }))
@@ -117,6 +131,7 @@ export async function runAppQuery(userId: string, query: string): Promise<AppQue
     for (const item of r.items) {
       const name = (item.name ?? item.rawName ?? "").trim() || "—";
       const totalPrice = Number(item.totalPrice);
+      if (!Number.isFinite(totalPrice) || totalPrice <= 0) continue;
       const qty = Number(item.quantity) || 1;
       const unitPrice = totalPrice / qty;
       itemPrices.push({
@@ -148,6 +163,48 @@ export async function runAppQuery(userId: string, query: string): Promise<AppQue
   });
 
   switch (intent) {
+    case "item_lookup": {
+      const q = query.toLowerCase().trim();
+      if (!q) return { answer: "Try searching for an item like \"milk\" or asking \"cheapest store for milk\"." };
+      if (itemPrices.length === 0) {
+        return { answer: "No item-level prices found yet. Scan receipts with visible line-item prices to enable item search." };
+      }
+      const matches = itemPrices.filter((r) => r.itemName.toLowerCase().includes(q)).slice(0, 50);
+      if (matches.length === 0) {
+        return {
+          answer: `No item matches found for "${query}". Try a shorter term (e.g. "milk") or check spelling.`,
+          data: { byStore: byStore.slice(0, 5), byCategory: byCategory.slice(0, 5), topCategory: topCategory ?? undefined, recentPurchases: recentPurchases.slice(0, 3) },
+        };
+      }
+      const byItem: Record<string, { count: number; min: number; max: number; sum: number; stores: Set<string> }> = {};
+      for (const m of matches) {
+        const key = m.itemName;
+        if (!byItem[key]) byItem[key] = { count: 0, min: Number.POSITIVE_INFINITY, max: 0, sum: 0, stores: new Set() };
+        byItem[key].count += 1;
+        byItem[key].min = Math.min(byItem[key].min, m.unitPrice);
+        byItem[key].max = Math.max(byItem[key].max, m.unitPrice);
+        byItem[key].sum += m.unitPrice;
+        byItem[key].stores.add(m.storeName);
+      }
+      const rows = Object.entries(byItem)
+        .map(([itemName, v]) => ({
+          itemName,
+          seen: v.count,
+          avgUnitPrice: round2(v.sum / Math.max(1, v.count)),
+          minUnitPrice: round2(v.min === Number.POSITIVE_INFINITY ? 0 : v.min),
+          maxUnitPrice: round2(v.max),
+          storeCount: v.stores.size,
+        }))
+        .sort((a, b) => b.seen - a.seen)
+        .slice(0, 10);
+      const lines = rows
+        .map((r) => `• ${r.itemName}: avg $${r.avgUnitPrice.toFixed(2)} (min $${r.minUnitPrice.toFixed(2)}), seen ${r.seen}× across ${r.storeCount} store(s)`)
+        .join("\n");
+      return {
+        answer: `Matches for "${query}":\n\n${lines}\n\nTip: ask "cheapest store for ${query}" to compare stores.`,
+        data: { cheapestStore: rows.map((r) => ({ itemName: r.itemName, storeName: "—", unitPrice: r.minUnitPrice })) as any },
+      };
+    }
     case "spend_at_store": {
       const storeHint = extractStoreForSpendAt(query);
       if (byStore.length === 0) {

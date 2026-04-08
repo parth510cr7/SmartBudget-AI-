@@ -1,0 +1,14 @@
+.git
+node_modules
+
+# Cursor / agent files (can contain symlinks on Windows)
+.agents
+.cursor
+
+# Misc local artifacts
+**/*.log
+**/.DS_Store
+**/dist
+**/build
+**/.expo
+

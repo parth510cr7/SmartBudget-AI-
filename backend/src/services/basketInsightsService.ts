@@ -40,8 +40,9 @@ function haversineKm(
 const MIN_COVERAGE_RATIO = 0.33;
 const FALLBACK_MESSAGE = "Don't have best pick yet 🥶";
 
-// #region agent log
+/** Optional local ingest (off by default; set AGENT_DEBUG_INGEST=1 to enable). */
 function debugLog(hypothesisId: string, message: string, data: Record<string, unknown>) {
+  if (process.env.AGENT_DEBUG_INGEST !== "1") return;
   try {
     const f = (globalThis as unknown as { fetch?: typeof fetch }).fetch;
     if (typeof f !== "function") return;
@@ -62,7 +63,6 @@ function debugLog(hypothesisId: string, message: string, data: Record<string, un
     // ignore
   }
 }
-// #endregion
 
 function buildWhyNoRecommendation(
   itemNames: string[],
@@ -206,20 +206,44 @@ export interface BasketInsightsResponse {
   nearbyCommunityAverage: NearbyCommunityAverageEntry[] | null;
   multiStoreRecommendation: MultiStoreRecommendationSection;
   topSpendCategories: TopSpendCategory[];
+  /** Debug-only: helps trace “why is estimate $0?” reports. */
+  debug?: {
+    historicalItemCount: number;
+    historicalPricedItemCount: number;
+    basketItemCount: number;
+    itemsMatchedCount: number;
+    estimatedTotalKnownData: number;
+  };
 }
 
 function itemMatchesBasket(normalizedItem: string, basketNorm: string[]): boolean {
   return basketNorm.some((b) => normalizedItem.includes(b) || b.includes(normalizedItem));
 }
 
+function effectiveUnitPriceForHistoryItem(it: { unitPrice: number; totalPrice: number; quantity: number }): number {
+  const up = Number(it.unitPrice);
+  if (Number.isFinite(up) && up > 0) return up;
+  const tot = Number(it.totalPrice);
+  const qty = Number(it.quantity) || 1;
+  if (Number.isFinite(tot) && tot > 0 && qty > 0) return tot / qty;
+  return 0;
+}
+
 /** How many basket lines have at least one matching receipt item (per basket item, not distinct receipt rows). */
 function countBasketItemsWithReceiptMatch(
   basketNorm: string[],
-  historicalItems: { name: string }[]
+  historicalItems: { name: string; unitPrice?: number; totalPrice?: number; quantity?: number }[]
 ): number {
   let n = 0;
   for (const b of basketNorm) {
-    const hit = historicalItems.some((it) => receiptLineMatchesBasketItem(b, it));
+    const hit = historicalItems.some((it) => {
+      const up =
+        it.unitPrice != null && it.totalPrice != null && it.quantity != null
+          ? effectiveUnitPriceForHistoryItem({ unitPrice: Number(it.unitPrice), totalPrice: Number(it.totalPrice), quantity: Number(it.quantity) })
+          : 0;
+      if (up <= 0) return false;
+      return receiptLineMatchesBasketItem(b, it as { name: string });
+    });
     if (hit) n++;
   }
   return n;
@@ -228,13 +252,20 @@ function countBasketItemsWithReceiptMatch(
 function partitionBasketLinesByReceiptMatch(
   itemNames: string[],
   basketNorm: string[],
-  historicalItems: { name: string }[]
+  historicalItems: { name: string; unitPrice?: number; totalPrice?: number; quantity?: number }[]
 ): { matched: string[]; unmatched: string[] } {
   const matched: string[] = [];
   const unmatched: string[] = [];
   for (let i = 0; i < itemNames.length; i++) {
     const norm = basketNorm[i] ?? normalizeName(itemNames[i] ?? "");
-    const hit = historicalItems.some((it) => receiptLineMatchesBasketItem(norm, it));
+    const hit = historicalItems.some((it) => {
+      const up =
+        it.unitPrice != null && it.totalPrice != null && it.quantity != null
+          ? effectiveUnitPriceForHistoryItem({ unitPrice: Number(it.unitPrice), totalPrice: Number(it.totalPrice), quantity: Number(it.quantity) })
+          : 0;
+      if (up <= 0) return false;
+      return receiptLineMatchesBasketItem(norm, it as { name: string });
+    });
     if (hit) matched.push(itemNames[i]);
     else unmatched.push(itemNames[i]);
   }
@@ -250,8 +281,10 @@ async function getTopSpendCategories(userId: string, limit: number): Promise<Top
   });
   const byCategory = new Map<string, number>();
   for (const it of items) {
+    const total = Number(it.totalPrice);
+    if (!Number.isFinite(total) || total <= 0) continue;
     const cat = (it.category ?? "Other").trim() || "Other";
-    byCategory.set(cat, (byCategory.get(cat) ?? 0) + Number(it.totalPrice) || 0);
+    byCategory.set(cat, (byCategory.get(cat) ?? 0) + total);
   }
   return [...byCategory.entries()]
     .map(([name, amount]) => ({ name, amount }))
@@ -313,6 +346,7 @@ export async function getBasketInsights(
     where: itemWhereScoped,
     include: { receipt: { include: { store: true } } },
   });
+  const historicalPricedItemCount = historicalItems.filter((it) => Number(it.totalPrice) > 0 || Number(it.unitPrice) > 0).length;
 
   // #region agent log
   debugLog("H1", "historical items loaded", {
@@ -336,14 +370,22 @@ export async function getBasketInsights(
     const key = normalizeName(it.name);
     const matches = basketNorm.some((b) => receiptLineMatchesBasketItem(b, it));
     if (!matches) continue;
+    const qty = Number(it.quantity) || 1;
+    const total = Number(it.totalPrice) || 0;
+    const effectiveUnitPrice = effectiveUnitPriceForHistoryItem({
+      unitPrice: Number(it.unitPrice),
+      totalPrice: total,
+      quantity: qty,
+    });
+    if (!Number.isFinite(effectiveUnitPrice) || effectiveUnitPrice <= 0) continue;
     const entry = {
       storeName: it.receipt.store.name,
-      unitPrice: it.unitPrice,
+      unitPrice: effectiveUnitPrice,
       unit: it.unit ?? "item",
       matchedReceiptItemName: it.name,
     };
     const cur = byProduct.get(key);
-    if (!cur || it.unitPrice < cur.unitPrice) byProduct.set(key, entry);
+    if (!cur || effectiveUnitPrice < cur.unitPrice) byProduct.set(key, entry);
   }
   response.yourHistory = [...byProduct.entries()].map(([itemName, v]) => ({
     itemName,
@@ -612,6 +654,16 @@ export async function getBasketInsights(
     enabled: false,
     reasonShown: response.bestStore.enabled ? "Not computed" : "Insufficient data for split",
   };
+
+  if (process.env.NODE_ENV !== "production") {
+    response.debug = {
+      historicalItemCount: historicalItems.length,
+      historicalPricedItemCount,
+      basketItemCount: itemNames.length,
+      itemsMatchedCount: itemsMatched,
+      estimatedTotalKnownData: response.estimatedTotalKnownData,
+    };
+  }
 
   return response;
 }

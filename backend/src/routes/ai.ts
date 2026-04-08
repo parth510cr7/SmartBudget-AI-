@@ -1,7 +1,8 @@
-import { Router, Request, Response } from "express";
+import { Router, Response } from "express";
 import { AuthRequest } from "../middlewares/auth";
 import { prisma } from "../lib/db";
-import { generateChatReply } from "../services/aiService";
+import { runAppQuery } from "../services/appQueryService";
+import { API_VERSION } from "../constants/api";
 
 const router = Router();
 
@@ -33,15 +34,19 @@ function buildReceiptContext(receipts: { date: Date; total: number; store: { nam
 
 router.post("/chat", async (req: AuthRequest, res: Response) => {
   try {
+    const requestId = typeof (req as unknown as { requestId?: unknown }).requestId === "string"
+      ? ((req as unknown as { requestId: string }).requestId)
+      : undefined;
+    const meta = { ...(requestId ? { requestId } : {}), apiVersion: API_VERSION };
     const { message } = (req.body as { message?: string }) ?? {};
     const userMessage = typeof message === "string" ? message.trim() : "";
     if (!req.auth) {
-      res.status(401).json({ error: "Unauthorized" });
+      res.status(401).json({ error: "Unauthorized", meta });
       return;
     }
     const user = await prisma.user.findUnique({ where: { firebaseId: req.auth.uid } });
     if (!user) {
-      res.status(404).json({ error: "User not found" });
+      res.status(404).json({ error: "User not found", meta });
       return;
     }
     const receipts = await prisma.receipt.findMany({
@@ -49,13 +54,23 @@ router.post("/chat", async (req: AuthRequest, res: Response) => {
       include: { store: true, items: true },
       orderBy: { date: "desc" },
     });
+    // Cloud chat is disabled; provide a deterministic, item-aware fallback instead of a generic error.
+    // This keeps Search useful for queries like "Milk" without requiring an LLM.
+    const q = userMessage || "summary";
+    const app = await runAppQuery(user.id, q);
     const context = buildReceiptContext(receipts);
-    const reply = await generateChatReply(userMessage || "Summarize my spending.", context);
-    res.json({ reply });
+    const reply = [app.answer, "", "—", "", "Data source: your verified receipts.", `Receipts analyzed: ${receipts.length}.`].join("\n");
+    res.json({
+      reply,
+      data: app.data,
+      debug: { mode: "fallback_app_query", contextPreview: context.slice(0, 500) },
+      meta,
+    });
   } catch (err) {
     console.error("AI chat failed:", err);
     res.json({
-      reply: "I couldn't analyze your receipts right now. Please try again.",
+      reply: "I couldn't analyze your receipts right now. If this keeps happening, try adding more verified receipts with readable line-item prices.",
+      meta: { apiVersion: API_VERSION },
     });
   }
 });

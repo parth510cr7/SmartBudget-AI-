@@ -33,7 +33,11 @@ import {
   downloadPhiModel,
   getModelFileUri,
   getModelPath,
+  getModelInfo,
+  deletePhiModel,
 } from "../../src/services/phiModelDownload";
+import * as FileSystem from "expo-file-system";
+import { Platform } from "react-native";
 
 function isImageUri(s: string): boolean {
   return s.startsWith("http") || s.startsWith("data:") || s.startsWith("file:");
@@ -52,6 +56,9 @@ export default function ProfileScreen() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [loadingModel, setLoadingModel] = useState(false);
   const [llmReady, setLlmReady] = useState(false);
+  const [modelInfo, setModelInfo] = useState<{ path: string; exists: boolean; sizeBytes: number } | null>(null);
+  const [lastLoadError, setLastLoadError] = useState<string | null>(null);
+  const [storageDiag, setStorageDiag] = useState<{ platform: string; docDir: string | null; cacheDir: string | null } | null>(null);
   const user = useStore((s) => s.user);
   const authToken = useStore((s) => (s.user as { idToken?: string } | null)?.idToken ?? null);
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
@@ -70,7 +77,14 @@ export default function ProfileScreen() {
       loadLocationConsent().then(setLocationConsent);
       getLocationPermissionStatus().then(setLocationStatus);
       isModelDownloaded().then(setModelDownloaded);
+      getModelInfo().then(setModelInfo).catch(() => setModelInfo(null));
       setLlmReady(isLLMReady());
+      const fs = FileSystem as unknown as { documentDirectory?: string | null; cacheDirectory?: string | null };
+      setStorageDiag({
+        platform: Platform.OS,
+        docDir: fs.documentDirectory ?? null,
+        cacheDir: fs.cacheDirectory ?? null,
+      });
     }, [setLocationConsent])
   );
 
@@ -152,6 +166,7 @@ export default function ProfileScreen() {
               .then(() => {
                 useStore.getState().setTransactions([]);
                 useStore.getState().setBasket([]);
+                useStore.getState().setLastReceiptInsight(null);
                 useStore.getState().triggerDashboardRefresh();
               })
               .catch((e) => Alert.alert("Error", e instanceof Error ? e.message : "Reset failed"));
@@ -193,6 +208,7 @@ export default function ProfileScreen() {
     try {
       await downloadPhiModel((p) => setDownloadProgress(p));
       setModelDownloaded(true);
+      getModelInfo().then(setModelInfo).catch(() => setModelInfo(null));
     } catch (e) {
       setDownloadError(e instanceof Error ? e.message : "Download failed");
     } finally {
@@ -204,10 +220,14 @@ export default function ProfileScreen() {
   async function handleLoadPhiModel() {
     setLoadingModel(true);
     setDownloadError(null);
+    setLastLoadError(null);
     try {
-      const exists = await isModelDownloaded();
-      if (!exists) {
-        setDownloadError("Model file not found. Re-download and try again.");
+      const info = await getModelInfo().catch(() => null);
+      setModelInfo(info);
+      const okDownloaded = await isModelDownloaded();
+      if (!okDownloaded) {
+        const sizeMb = info ? (info.sizeBytes / (1024 * 1024)).toFixed(0) : "0";
+        setDownloadError(`Model file missing or incomplete (size ${sizeMb} MB). Re-download and try again.`);
         return;
       }
       const uri = getModelFileUri();
@@ -215,7 +235,9 @@ export default function ProfileScreen() {
       setLlmReady(ok);
       if (!ok) setDownloadError("Failed to load model");
     } catch (e) {
-      setDownloadError(e instanceof Error ? e.message : "Load failed");
+      const msg = e instanceof Error ? e.message : "Load failed";
+      setDownloadError(msg);
+      setLastLoadError(msg);
     } finally {
       setLoadingModel(false);
     }
@@ -312,16 +334,6 @@ export default function ProfileScreen() {
       <Text style={[styles.sectionLabel, { color: textSecondary }]}>Data</Text>
       <TouchableOpacity
         style={[styles.privacyCard, { backgroundColor: glass }]}
-        onPress={() => router.push("/(tabs)/medical")}
-        activeOpacity={0.85}
-      >
-        <Text style={[styles.privacyTitle, { color: textPrimary }]}>Medical Vault</Text>
-        <Text style={[styles.privacyHint, { color: textSecondary }]}>
-          Patient folders, records & medical expenses.
-        </Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.privacyCard, { backgroundColor: glass }]}
         onPress={() => router.push("/modal/price-history-sharing")}
         activeOpacity={0.85}
       >
@@ -346,13 +358,23 @@ export default function ProfileScreen() {
         <Text style={[styles.privacyHint, { color: textSecondary }]}>
           Parse receipts on-device with no cloud. Download once (~1.4 GB), then load. Requires a development build.
         </Text>
+        {storageDiag ? (
+          <Text style={[styles.hint, { color: textSecondary }]}>
+            Storage: {storageDiag.platform} · docDir {storageDiag.docDir ? "ok" : "null"} · cacheDir {storageDiag.cacheDir ? "ok" : "null"}
+          </Text>
+        ) : null}
+        {modelInfo ? (
+          <Text style={[styles.hint, { color: textSecondary }]}>
+            Model: {modelInfo.exists ? "found" : "missing"} · {(modelInfo.sizeBytes / (1024 * 1024)).toFixed(0)} MB
+          </Text>
+        ) : null}
         {!llmAvailable ? (
           <Text style={[styles.privacyHint, { color: textSecondary }]}>
             Not available in Expo Go. Build with: npx expo run:ios or EAS Build.
           </Text>
         ) : llmReady ? (
           <Text style={[styles.privacyStatus, { color: IOS_BLUE, fontWeight: "600" }]}>Ready — receipts use on-device LLM when possible.</Text>
-        ) : modelDownloaded ? (
+        ) : modelDownloaded || modelInfo?.exists ? (
           <>
             <TouchableOpacity
               style={[styles.demoBtn, { backgroundColor: IOS_BLUE }]}
@@ -365,7 +387,32 @@ export default function ProfileScreen() {
                 <Text style={styles.demoBtnText}>Load model</Text>
               )}
             </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.dataResetBtn, { borderColor: "rgba(255, 59, 48, 0.35)", marginBottom: 6 }]}
+              onPress={async () => {
+                Alert.alert("Delete model", "Remove the downloaded model file from this device? You can re-download it after.", [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Delete",
+                    style: "destructive",
+                    onPress: async () => {
+                      await deletePhiModel();
+                      setModelDownloaded(false);
+                      setLlmReady(false);
+                      setDownloadError(null);
+                      setLastLoadError(null);
+                      getModelInfo().then(setModelInfo).catch(() => setModelInfo(null));
+                    },
+                  },
+                ]);
+              }}
+              activeOpacity={0.85}
+            >
+              <Trash2 size={18} color={IOS_RED} />
+              <Text style={[styles.dataResetText, { color: IOS_RED }]}>Delete model file</Text>
+            </TouchableOpacity>
             {downloadError ? <Text style={[styles.hint, { color: IOS_RED }]}>{downloadError}</Text> : null}
+            {lastLoadError ? <Text style={[styles.hint, { color: IOS_RED }]}>{`Load error: ${lastLoadError}`}</Text> : null}
           </>
         ) : (
           <>

@@ -89,10 +89,21 @@ router.get("/summary", async (req: AuthRequest, res: Response) => {
     let totalStores = storeIds.size;
 
     const categorySums: Record<string, number> = {};
+    // Category aggregation should reconcile with receipt totals even when item extraction is partial.
+    // We attribute priced line items to their categories, and place any un-attributed remainder into Other.
     for (const r of receipts) {
+      let attributed = 0;
       for (const item of r.items) {
-        const cat = item.category ?? "Other";
-        categorySums[cat] = (categorySums[cat] ?? 0) + Number(item.totalPrice);
+        const itemTotal = Number(item.totalPrice);
+        if (!Number.isFinite(itemTotal) || itemTotal <= 0) continue;
+        const cat = (item.category ?? "").trim() || "Other";
+        categorySums[cat] = (categorySums[cat] ?? 0) + itemTotal;
+        attributed += itemTotal;
+      }
+      const receiptTotal = Number(r.total);
+      const remainder = Number.isFinite(receiptTotal) ? receiptTotal - attributed : 0;
+      if (remainder > 0.01) {
+        categorySums["Other"] = (categorySums["Other"] ?? 0) + remainder;
       }
     }
 

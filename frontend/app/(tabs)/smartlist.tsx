@@ -44,7 +44,7 @@ export default function SmartListScreen() {
   function loadIntoBasket(list: SmartListRow) {
     const names = list.items.map((i) => i.name.trim()).filter(Boolean);
     setBasket(names.length > 0 ? names : []);
-    router.push({ pathname: "/(tabs)/insights", params: { freshBasket: "1" } });
+    router.push({ pathname: "/(tabs)/search", params: { freshBasket: "1" } });
   }
 
   function confirmDelete(list: SmartListRow) {
@@ -75,12 +75,12 @@ export default function SmartListScreen() {
 
       <TouchableOpacity
         style={[styles.linkRow, { backgroundColor: glass, borderColor: "rgba(255,255,255,0.5)" }]}
-        onPress={() => router.push("/(tabs)/insights")}
+        onPress={() => router.push("/(tabs)/search")}
         activeOpacity={0.8}
       >
         <Search size={22} color={IOS_BLUE} />
         <View style={styles.linkTextWrap}>
-          <Text style={[styles.linkTitle, { color: textPrimary }]}>Search (Insights)</Text>
+          <Text style={[styles.linkTitle, { color: textPrimary }]}>Search</Text>
           <Text style={[styles.linkSub, { color: textSecondary }]}>Load saved, add items, Finalize</Text>
         </View>
         <ChevronRight size={22} color={textSecondary} />

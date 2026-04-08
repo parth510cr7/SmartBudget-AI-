@@ -27,7 +27,6 @@ model User {
   receipts              Receipt[]
   receiptsUploaded      Receipt[]              @relation("ReceiptUploadedBy")
   smartLists            SmartList[]
-  medicalFolders        MedicalFolder[]
   incomes               Income[]
   recurringPayments     RecurringPayment[]
   groupsOwned           Group[]
@@ -210,41 +209,6 @@ model RecurringPayment {
   frequency   String
   nextDueDate DateTime
   createdAt   DateTime @default(now())
-}
-
-model MedicalFolder {
-  id          String           @id @default(uuid())
-  userId      String
-  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  patientName String
-  createdAt   DateTime         @default(now())
-  expenses    MedicalExpense[]
-  records     MedicalRecord[]
-
-  @@unique([userId, patientName])
-}
-
-model MedicalRecord {
-  id        String        @id @default(uuid())
-  folderId  String
-  folder    MedicalFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
-  type      String
-  title     String
-  date      DateTime
-  notes     String?
-  createdAt DateTime      @default(now())
-}
-
-model MedicalExpense {
-  id           String        @id @default(uuid())
-  folderId     String
-  folder       MedicalFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
-  itemName     String
-  price        Float
-  date         DateTime
-  storeName    String?
-  storeAddress String?
-  createdAt    DateTime      @default(now())
 }
 
 model Group {

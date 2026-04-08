@@ -80,12 +80,16 @@ function parsePriceLine(line: string): { name: string; totalPrice: number; quant
 
   const name = namePart.length > 0 ? namePart : line.trim();
   if (name.length === 0) return null;
+  // Guard against OCR/POS codes being treated as items (e.g. "2915302", "2 0").
+  // If there are no letters after cleanup, it’s almost always unusable for matching.
+  if (!/[a-z]/i.test(name)) return null;
   return { name, totalPrice: amount, quantity, unit };
 }
 
 /**
  * Extract purchase item lines from normalized receipt, excluding meta lines and totals.
- * Lines that look like items but fail price parsing are kept as low-confidence (totalPrice 0) so they are not dropped.
+ * IMPORTANT: We only persist items with non-zero prices. Price-less lines create noisy $0 history
+ * and break basket estimates, so we exclude them from extracted items (they can still appear in debug output).
  */
 export function extractItems(
   normalized: NormalizedReceipt,
@@ -113,17 +117,6 @@ export function extractItems(
         totalPrice: parsed.totalPrice,
       });
       continue;
-    }
-    const rawName = line.trim();
-    if (rawName.length >= 2 && /[a-z]/i.test(rawName)) {
-      items.push({
-        name: rawName,
-        rawName,
-        quantity: 1,
-        unit: "item",
-        unitPrice: 0,
-        totalPrice: 0,
-      });
     }
   }
 

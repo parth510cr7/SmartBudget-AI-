@@ -39,6 +39,27 @@ function authHeaders(idToken: string | null): Record<string, string> {
   };
 }
 
+/** Correlates client ↔ server logs ( echoed in JSON `meta` and response header `X-Request-Id`). */
+export type ApiResponseMeta = { requestId: string; apiVersion: string };
+
+function newRequestId(): string {
+  try {
+    const c = globalThis.crypto as { randomUUID?: () => string } | undefined;
+    if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  } catch {
+    /* ignore */
+  }
+  return `req_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+}
+
+/** Same as authHeaders plus X-Request-Id for Search / basket / app-query tracing. */
+function authHeadersWithTrace(idToken: string | null): Record<string, string> {
+  return {
+    ...authHeaders(idToken),
+    "X-Request-Id": newRequestId(),
+  };
+}
+
 /** Bearer only (no Content-Type) — better for GET image / binary download. */
 function authBearerOnly(idToken: string | null): Record<string, string> {
   const token = idToken && idToken.trim() ? idToken : DEV_TOKEN;
@@ -204,10 +225,10 @@ export async function deleteTransaction(
 export async function appQuery(
   idToken: string | null,
   query: string
-): Promise<{ answer: string; data?: Record<string, unknown> }> {
+): Promise<{ answer: string; data?: Record<string, unknown>; meta?: ApiResponseMeta }> {
   const res = await fetch(`${getBaseURL()}/api/app-query`, {
     method: "POST",
-    headers: authHeaders(idToken),
+    headers: authHeadersWithTrace(idToken),
     body: JSON.stringify({ query: (query || "").trim() }),
   });
   if (!res.ok) {
@@ -217,10 +238,13 @@ export async function appQuery(
   return res.json();
 }
 
-export async function askSmartBudget(idToken: string | null, message: string): Promise<{ reply: string }> {
+export async function askSmartBudget(
+  idToken: string | null,
+  message: string
+): Promise<{ reply: string; data?: unknown; meta?: ApiResponseMeta }> {
   const res = await fetch(`${getBaseURL()}/api/ai/chat`, {
     method: "POST",
-    headers: authHeaders(idToken),
+    headers: authHeadersWithTrace(idToken),
     body: JSON.stringify({ message: message.trim() || "Summarize my spending." }),
   });
   if (!res.ok) {
@@ -318,6 +342,42 @@ export type FromLocalPayload = {
 };
 
 const RECEIPT_PROCESS_TIMEOUT_MS = 60000;
+
+/** Post-scan “overpaid vs typical” insight (your history + staple benchmarks). */
+export type OverpaidInsightPayload = {
+  receiptId: string;
+  storeName: string | null;
+  receiptTotal: number;
+  comparedActualTotal: number;
+  comparedBenchmarkTotal: number;
+  netDelta: number;
+  confidence: "high" | "medium" | "low" | "none";
+  headline: string;
+  subtext: string;
+  lines: Array<{
+    itemName: string;
+    quantity: number;
+    youPaid: number;
+    benchmarkTotal: number;
+    delta: number;
+    basis: string;
+  }>;
+};
+
+export async function getReceiptOverpaidInsight(
+  idToken: string | null,
+  receiptId: string
+): Promise<OverpaidInsightPayload> {
+  const res = await fetch(
+    `${getBaseURL()}/api/receipts/${encodeURIComponent(receiptId)}/overpaid-insight`,
+    { method: "GET", headers: authHeaders(idToken) }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Overpaid insight failed");
+  }
+  return res.json() as Promise<OverpaidInsightPayload>;
+}
 
 /** Receipt Intelligence Engine: send OCR raw text; optional base64 image enables cloud fallback when local confidence is low. */
 export async function postReceiptFromProcessText(
@@ -882,6 +942,7 @@ export type BasketInsightsResponse = {
     reasonShown?: string;
   };
   topSpendCategories: { name: string; amount: number }[];
+  meta?: ApiResponseMeta;
 };
 
 export async function getBasketInsights(
@@ -890,7 +951,7 @@ export async function getBasketInsights(
 ): Promise<BasketInsightsResponse> {
   const res = await fetch(`${getBaseURL()}/api/basket/insights`, {
     method: "POST",
-    headers: authHeaders(idToken),
+    headers: authHeadersWithTrace(idToken),
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -914,7 +975,7 @@ export async function getBasketSuggestions(
 ): Promise<BasketSuggestion[]> {
   const res = await fetch(`${getBaseURL()}/api/basket/suggestions`, {
     method: "POST",
-    headers: authHeaders(idToken),
+    headers: authHeadersWithTrace(idToken),
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -932,7 +993,7 @@ export async function recordBasketTermPreference(
 ): Promise<void> {
   const res = await fetch(`${getBaseURL()}/api/basket/preference`, {
     method: "POST",
-    headers: authHeaders(idToken),
+    headers: authHeadersWithTrace(idToken),
     body: JSON.stringify({ termKey, pickedLabel }),
   });
   if (!res.ok) {
@@ -1285,47 +1346,6 @@ export async function approveReceipt(receiptId: string, idToken: string | null):
   return res.json();
 }
 
-/** Suggest which receipt items look like Rx/drugs for "Add to medical" flow. */
-export async function getReceiptMedicalSuggestions(
-  receiptId: string,
-  idToken: string | null
-): Promise<{
-  receiptId: string;
-  storeName: string | null;
-  isPharmacyLike: boolean;
-  rxItemIds: string[];
-  allItemIds: string[];
-}> {
-  const res = await fetch(`${getBaseURL()}/api/receipts/${encodeURIComponent(receiptId)}/medical-suggestions`, {
-    method: "GET",
-    headers: authHeaders(idToken),
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error((data as { error?: string }).error ?? "Failed to get suggestions");
-  }
-  return res.json();
-}
-
-/** Add selected receipt items to a medical folder (patient). */
-export async function addReceiptToMedical(
-  receiptId: string,
-  folderId: string,
-  itemIds: string[],
-  idToken: string | null
-): Promise<{ success: boolean; folderId: string; patientName: string; addedCount: number }> {
-  const res = await fetch(`${getBaseURL()}/api/receipts/${encodeURIComponent(receiptId)}/add-to-medical`, {
-    method: "POST",
-    headers: authHeaders(idToken),
-    body: JSON.stringify({ folderId, itemIds }),
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error((data as { error?: string }).error ?? "Failed to add to medical");
-  }
-  return res.json();
-}
-
 /** Update a receipt line item (e.g. category, subcategory for item-level mapping). */
 export async function updateReceiptItem(
   receiptId: string,
@@ -1471,96 +1491,6 @@ export async function optimizeSmartList(idToken: string | null, listId: string):
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || "Optimize failed");
-  }
-  return res.json();
-}
-
-// ——— Medical ———
-export type MedicalFolderRow = {
-  id: string;
-  patientName: string;
-  createdAt: string;
-  recordsCount: number;
-  expensesCount: number;
-};
-
-export type MedicalFolderDetail = {
-  id: string;
-  patientName: string;
-  createdAt: string;
-  records: { id: string; type: string; title: string; date: string; notes: string | null; createdAt: string }[];
-  expenses: { id: string; itemName: string; price: number; date: string; storeName: string | null; storeAddress: string | null; createdAt: string }[];
-};
-
-export async function getMedicalFolders(idToken: string | null): Promise<MedicalFolderRow[]> {
-  const res = await fetch(`${getBaseURL()}/api/medical`, { method: "GET", headers: authHeaders(idToken) });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { error?: string }).error || "Failed to load medical folders");
-  }
-  return res.json();
-}
-
-export async function createMedicalFolder(idToken: string | null, patientName: string): Promise<{ id: string; patientName: string; createdAt: string }> {
-  const res = await fetch(`${getBaseURL()}/api/medical`, {
-    method: "POST",
-    headers: authHeaders(idToken),
-    body: JSON.stringify({ patientName }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { error?: string }).error || "Failed to create folder");
-  }
-  return res.json();
-}
-
-export async function getMedicalFolder(idToken: string | null, folderId: string): Promise<MedicalFolderDetail> {
-  const res = await fetch(`${getBaseURL()}/api/medical/${encodeURIComponent(folderId)}`, { method: "GET", headers: authHeaders(idToken) });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { error?: string }).error || "Failed to load folder");
-  }
-  return res.json();
-}
-
-export async function deleteMedicalFolder(idToken: string | null, folderId: string): Promise<void> {
-  const res = await fetch(`${getBaseURL()}/api/medical/${encodeURIComponent(folderId)}`, { method: "DELETE", headers: authHeaders(idToken) });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { error?: string }).error || "Failed to delete folder");
-  }
-}
-
-export async function addMedicalRecord(
-  idToken: string | null,
-  folderId: string,
-  data: { type?: string; title: string; date?: string; notes?: string | null }
-): Promise<{ id: string; type: string; title: string; date: string; notes: string | null; createdAt: string }> {
-  const res = await fetch(`${getBaseURL()}/api/medical/${encodeURIComponent(folderId)}/records`, {
-    method: "POST",
-    headers: authHeaders(idToken),
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { error?: string }).error || "Failed to add record");
-  }
-  return res.json();
-}
-
-export async function addMedicalExpense(
-  idToken: string | null,
-  folderId: string,
-  data: { itemName: string; price: number; date?: string; storeName?: string | null; storeAddress?: string | null }
-): Promise<{ id: string; itemName: string; price: number; date: string; storeName: string | null; storeAddress: string | null; createdAt: string }> {
-  const res = await fetch(`${getBaseURL()}/api/medical/${encodeURIComponent(folderId)}/expenses`, {
-    method: "POST",
-    headers: authHeaders(idToken),
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { error?: string }).error || "Failed to add expense");
   }
   return res.json();
 }

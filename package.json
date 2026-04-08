@@ -1,0 +1,8 @@
+{
+  "name": "smartbudgetai-workspace",
+  "private": true,
+  "description": "Root scripts only; app code lives in backend/ and frontend/",
+  "scripts": {
+    "verify": "node scripts/verify-dev-tooling.mjs"
+  }
+}

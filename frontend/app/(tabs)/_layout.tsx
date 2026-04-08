@@ -42,7 +42,7 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="insights"
+        name="search"
         options={{
           title: "Search",
           tabBarIcon: ({ color, size }) => <Search color={color} size={size} />,
@@ -76,10 +76,6 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="groups"
-        options={{ href: null }}
-      />
-      <Tabs.Screen
-        name="medical"
         options={{ href: null }}
       />
       <Tabs.Screen

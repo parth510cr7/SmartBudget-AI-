@@ -9,6 +9,8 @@ import {
   ShoppingBag,
   ChevronRight,
   Plus,
+  X,
+  Sparkles,
 } from "lucide-react-native";
 import { getSummary, getReceipts, getStores, type SummaryCategory } from "../../src/api/client";
 import { useStore } from "../../src/store/useStore";
@@ -51,6 +53,8 @@ export default function DashboardScreen() {
   const setDarkMode = useStore((s) => s.setDarkMode);
   const [showTotalSpentModal, setShowTotalSpentModal] = useState(false);
   const refreshKey = useStore((s) => s.refreshKey ?? 0);
+  const lastReceiptInsight = useStore((s) => s.lastReceiptInsight);
+  const setLastReceiptInsight = useStore((s) => s.setLastReceiptInsight);
   const [summary, setSummary] = useState<{
     totalSpent: number;
     totalStores: number;
@@ -125,6 +129,31 @@ export default function DashboardScreen() {
         </View>
 
         <Text style={[styles.greeting, { color: textPrimary }]}>Hello, {headerName}</Text>
+
+        {lastReceiptInsight ? (
+          <View
+            style={[
+              styles.insightCard,
+              { backgroundColor: glass, borderColor: lastReceiptInsight.netDelta > 0.15 ? "rgba(255,149,0,0.35)" : "rgba(52,199,89,0.35)" },
+              SHADOW.card,
+            ]}
+          >
+            <View style={styles.insightHeader}>
+              <Sparkles size={20} color={IOS_BLUE} />
+              <Text style={[styles.insightTitle, { color: textPrimary }]}>Smart insight</Text>
+              <TouchableOpacity onPress={() => setLastReceiptInsight(null)} hitSlop={12} accessibilityLabel="Dismiss insight">
+                <X size={20} color={textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.insightHeadline, { color: textPrimary }]}>{lastReceiptInsight.headline}</Text>
+            <Text style={[styles.insightSub, { color: textSecondary }]}>{lastReceiptInsight.subtext}</Text>
+            {lastReceiptInsight.lines.length > 0 ? (
+              <Text style={[styles.insightMeta, { color: textSecondary }]}>
+                Compared {lastReceiptInsight.lines.length} line(s) · confidence {lastReceiptInsight.confidence}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
 
         {/* Single hero: Total spent this period */}
         <TouchableOpacity
@@ -282,6 +311,23 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 20,
   },
+  insightCard: {
+    marginHorizontal: SPACING.pageHorizontal,
+    marginBottom: 16,
+    borderRadius: RADIUS.card,
+    padding: 16,
+    borderWidth: 1,
+  },
+  insightHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  insightTitle: { flex: 1, fontSize: 13, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6 },
+  insightHeadline: { fontSize: 17, fontWeight: "700", marginBottom: 6 },
+  insightSub: { fontSize: 14, lineHeight: 20 },
+  insightMeta: { fontSize: 12, marginTop: 8 },
   heroCard: {
     marginHorizontal: SPACING.pageHorizontal,
     borderRadius: RADIUS.card,

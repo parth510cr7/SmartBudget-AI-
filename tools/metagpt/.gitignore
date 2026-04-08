@@ -1,0 +1,8 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.metagpt/
+workspace/
+config2.yaml
+logs/

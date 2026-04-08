@@ -1,0 +1,3 @@
+# MetaGPT (DeepWisdom) — dev-time multi-agent codegen. Not bundled in the Expo app.
+# https://docs.deepwisdom.ai/main/en/guide/get_started/quickstart.html
+metagpt

@@ -36,16 +36,30 @@ export async function initOnDeviceLLM(
   if (initPromise != null) return initPromise;
   initPromise = (async () => {
     if (llamaContext != null) return true;
-    const { initLlama } = require("llama.rn");
+    let initLlama: ((opts: any, onProgress?: (p: number) => void) => Promise<any>) | null = null;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      initLlama = require("llama.rn").initLlama;
+    } catch {
+      initPromise = null;
+      throw new Error("On-device AI is not available in Expo Go. Install a dev build (Dev Client/EAS) with llama.rn.");
+    }
+    if (!initLlama) {
+      initPromise = null;
+      throw new Error("On-device AI module loaded but initLlama is missing. Rebuild the dev client.");
+    }
     const path = modelPath.startsWith("file://") ? modelPath : `file://${modelPath}`;
     try {
+      // iOS is memory-constrained; conservative defaults avoid “failed to load”.
+      const isIOS = Platform.OS === "ios";
       const context = await initLlama(
         {
           model: path,
-          use_mlock: true,
-          n_ctx: 2048,
-          n_gpu_layers: Platform.OS === "ios" ? 0 : 99,
-          n_batch: 512,
+          // mlock frequently fails on iOS; disable by default to reduce init failures.
+          use_mlock: false,
+          n_ctx: isIOS ? 768 : 2048,
+          n_gpu_layers: isIOS ? 0 : 99,
+          n_batch: isIOS ? 64 : 512,
           n_threads: 4,
         },
         onProgress
@@ -59,7 +73,13 @@ export async function initOnDeviceLLM(
       initPromise = null;
       const msg = e instanceof Error ? e.message : String(e);
       if (__DEV__) console.warn("[OnDeviceLLM] init failed", msg, e);
-      throw new Error(msg || "Failed to load model");
+      const hint = (() => {
+        if (/no such file|not found|ENOENT/i.test(msg)) return "Model file not found at path (download may have failed).";
+        if (/failed to load model/i.test(msg)) return "Model init failed (often memory/corruption). Try deleting and re-downloading the model.";
+        if (/permission/i.test(msg)) return "File permission error. Try reinstalling the dev build.";
+        return null;
+      })();
+      throw new Error([msg || "Failed to load model", hint].filter(Boolean).join(" — "));
     }
   })();
   return initPromise;

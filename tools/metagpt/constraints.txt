@@ -1,0 +1,8 @@
+# Constraints to avoid long pip backtracking on Windows.
+# MetaGPT pulls agentops -> opentelemetry packages, which can cause resolver churn.
+opentelemetry-api==1.30.0
+opentelemetry-sdk==1.30.0
+opentelemetry-proto==1.30.0
+opentelemetry-exporter-otlp-proto-common==1.30.0
+opentelemetry-exporter-otlp-proto-http==1.30.0
+

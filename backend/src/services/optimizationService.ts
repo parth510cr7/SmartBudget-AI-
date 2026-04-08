@@ -6,6 +6,7 @@ import {
   type MatchTier,
 } from "./basketMatcherEngine";
 import { getItemWhereForUserReceipts } from "./basketReceiptScope";
+import { appendFile } from "node:fs/promises";
 
 export interface BasketItemPrice {
   itemName: string;
@@ -36,6 +37,8 @@ export interface OptimizeBasketResult {
 type HistoricalRow = {
   name: string;
   unitPrice: number;
+  totalPrice?: number;
+  quantity?: number;
   receipt: { storeId: string; date: Date; store: { name: string; address: string | null } };
 };
 
@@ -62,6 +65,22 @@ function pickBetter(a: Candidate, b: Candidate): Candidate {
   return a.unitPrice <= b.unitPrice ? a : b;
 }
 
+// #region agent log
+function debugLog(hypothesisId: string, message: string, data: Record<string, unknown>) {
+  const line =
+    JSON.stringify({
+      sessionId: "6bad93",
+      location: "services/optimizationService.ts",
+      runId: "baseline",
+      hypothesisId,
+      message,
+      data,
+      timestamp: Date.now(),
+    }) + "\n";
+  appendFile("debug-6bad93.log", line).catch(() => {});
+}
+// #endregion
+
 /**
  * Find best single store: evidence-weighted matches (not just coverage + raw subtotal).
  */
@@ -87,6 +106,13 @@ export async function optimizeBasket(
     },
   })) as HistoricalRow[];
 
+  // #region agent log
+  debugLog("H2", "optimizeBasket inputs", {
+    listItemCount: listItems.length,
+    historicalItemCount: historicalItems.length,
+  });
+  // #endregion
+
   /** For each basket line: best candidate per store */
   const listItemCandidates: { name: string; quantity: number; byStore: Map<string, Candidate> }[] = [];
 
@@ -95,11 +121,17 @@ export async function optimizeBasket(
     for (const hi of historicalItems) {
       const m = matchBasketToReceiptName(li.name, hi.name);
       if (m.score < MATCH_THRESHOLD_PRICE) continue;
+      const qty = Number(hi.quantity) || 1;
+      const total = Number(hi.totalPrice) || 0;
+      const effectiveUnitPrice =
+        Number(hi.unitPrice) > 0 ? Number(hi.unitPrice) : total > 0 && qty > 0 ? total / qty : 0;
+      // Critical: never use zero-priced line items for basket estimates.
+      if (!Number.isFinite(effectiveUnitPrice) || effectiveUnitPrice <= 0) continue;
       const cand: Candidate = {
         storeId: hi.receipt.storeId,
         storeName: hi.receipt.store.name,
         storeAddress: hi.receipt.store.address,
-        unitPrice: hi.unitPrice,
+        unitPrice: effectiveUnitPrice,
         receiptItemName: hi.name,
         matchScore: m.score,
         tier: m.tier,
@@ -236,6 +268,16 @@ export async function optimizeBasket(
   }
 
   if (!chosen) return null;
+
+  // #region agent log
+  debugLog("H2", "optimizeBasket chosen store", {
+    storeId: chosen.storeId,
+    hasAllItems: chosen.hasAllItems,
+    covered: chosen.covered,
+    storeTotal: chosen.storeTotal,
+    evidenceScore: chosen.evidenceScore,
+  });
+  // #endregion
 
   const bestStore = storeMap.get(chosen.storeId)!;
   const itemsCoveredAtStore = chosen.covered;

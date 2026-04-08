@@ -12,7 +12,7 @@ import {
   TextInput,
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
-import { X, Trash2, Users, Check, Circle, ArrowLeft, CheckCircle, Stethoscope } from "lucide-react-native";
+import { X, Trash2, Users, Check, Circle, ArrowLeft, CheckCircle } from "lucide-react-native";
 import {
   getReceipts,
   getReceiptImageDataUri,
@@ -22,9 +22,6 @@ import {
   getGroupDashboard,
   setReceiptGroup,
   shareReceiptToGroup,
-  getReceiptMedicalSuggestions,
-  addReceiptToMedical,
-  getMedicalFolders,
   updateReceiptItem,
   updateReceiptDate,
   getMyHousehold,
@@ -139,24 +136,24 @@ function ReceiptThumbnail({
   );
 }
 
-const libraryStyles = {
-  imageWrapOuter: { width: "100%", aspectRatio: 1, position: "relative" as const, backgroundColor: "transparent" },
+const libraryStyles = StyleSheet.create({
+  imageWrapOuter: { width: "100%", aspectRatio: 1, position: "relative", backgroundColor: "transparent" },
   image: { width: "100%", height: "100%" },
-  imagePlaceholder: { width: "100%", height: "100%", alignItems: "center" as const, justifyContent: "center" as const, padding: 12 },
-  placeholderStore: { fontSize: 13, textAlign: "center" as const, marginBottom: 4 },
-  placeholderTotal: { fontSize: 18, fontWeight: "700" as const },
+  imagePlaceholder: { width: "100%", height: "100%", alignItems: "center", justifyContent: "center", padding: 12 },
+  placeholderStore: { fontSize: 13, textAlign: "center", marginBottom: 4 },
+  placeholderTotal: { fontSize: 18, fontWeight: "700" },
   trashBtn: {
-    position: "absolute" as const,
+    position: "absolute",
     top: 8,
     right: 8,
     width: 36,
     height: 36,
     borderRadius: 18,
     backgroundColor: "rgba(0,0,0,0.5)",
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
+    alignItems: "center",
+    justifyContent: "center",
   },
-};
+});
 
 export default function LibraryModal() {
   const router = useRouter();
@@ -179,12 +176,6 @@ export default function LibraryModal() {
   const [detailReceipt, setDetailReceipt] = useState<ReceiptWithStore | null>(null);
   const [detailImageUri, setDetailImageUri] = useState<string | null>(null);
   const [approveLoading, setApproveLoading] = useState(false);
-  const [addToMedicalModal, setAddToMedicalModal] = useState(false);
-  const [medicalFolders, setMedicalFolders] = useState<{ id: string; patientName: string }[]>([]);
-  const [medicalSuggestions, setMedicalSuggestions] = useState<{ rxItemIds: string[]; allItemIds: string[] } | null>(null);
-  const [selectedMedicalFolderId, setSelectedMedicalFolderId] = useState<string | null>(null);
-  const [selectedMedicalItemIds, setSelectedMedicalItemIds] = useState<string[]>([]);
-  const [addToMedicalLoading, setAddToMedicalLoading] = useState(false);
   const [editingCategoryItemId, setEditingCategoryItemId] = useState<string | null>(null);
   const [updateItemLoading, setUpdateItemLoading] = useState(false);
   const [dateEditOpen, setDateEditOpen] = useState(false);
@@ -583,37 +574,6 @@ export default function LibraryModal() {
                       )}
                     </TouchableOpacity>
                   )}
-                  {(!detailReceipt.uploadedBy || detailReceipt.uploadedBy.userId === currentUserId) && (
-                  <TouchableOpacity
-                    style={[styles.addToMedicalBtn, { backgroundColor: bg, borderColor: IOS_BLUE }]}
-                    onPress={async () => {
-                      if (!detailReceipt?.id) return;
-                      setAddToMedicalModal(true);
-                      setSelectedMedicalFolderId(null);
-                      try {
-                        const [suggestions, folders] = await Promise.all([
-                          getReceiptMedicalSuggestions(detailReceipt.id, authToken),
-                          getMedicalFolders(authToken),
-                        ]);
-                        setMedicalSuggestions({
-                          rxItemIds: suggestions.rxItemIds,
-                          allItemIds: suggestions.allItemIds,
-                        });
-                        setMedicalFolders(folders.map((f) => ({ id: f.id, patientName: f.patientName })));
-                        setSelectedMedicalItemIds(
-                          suggestions.rxItemIds.length > 0 ? suggestions.rxItemIds : suggestions.allItemIds
-                        );
-                        if (folders.length === 1) setSelectedMedicalFolderId(folders[0].id);
-                      } catch (e) {
-                        Alert.alert("Error", e instanceof Error ? e.message : "Could not load");
-                        setAddToMedicalModal(false);
-                      }
-                    }}
-                  >
-                    <Stethoscope size={20} color={IOS_BLUE} />
-                    <Text style={[styles.addToMedicalBtnText, { color: IOS_BLUE }]}>Add to medical</Text>
-                  </TouchableOpacity>
-                  )}
                 </View>
               </ScrollView>
             )}
@@ -712,108 +672,6 @@ export default function LibraryModal() {
                 </TouchableOpacity>
               ))}
             </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={addToMedicalModal && !!detailReceipt} transparent animationType="fade">
-        <View style={styles.splitModalOverlay}>
-          <View style={[styles.splitModalCard, { backgroundColor: glass }]}>
-            <View style={styles.splitModalHeader}>
-              <Text style={[styles.splitModalTitle, { color: textPrimary, flex: 1 }]}>Add to medical</Text>
-              <TouchableOpacity onPress={() => setAddToMedicalModal(false)} hitSlop={12}>
-                <X size={24} color={textPrimary} />
-              </TouchableOpacity>
-            </View>
-            {medicalFolders.length === 0 ? (
-              <Text style={[styles.splitModalEmpty, { color: textSecondary }]}>
-                Create a patient folder first (Medical tab in Profile).
-              </Text>
-            ) : (
-              <>
-                <Text style={[styles.splitModalLabel, { color: textSecondary }]}>Patient folder</Text>
-                <ScrollView style={{ maxHeight: 120 }} showsVerticalScrollIndicator={false}>
-                  {medicalFolders.map((f) => (
-                    <TouchableOpacity
-                      key={f.id}
-                      style={[
-                        styles.splitGroupRow,
-                        { backgroundColor: selectedMedicalFolderId === f.id ? (isDarkMode ? "rgba(0,122,255,0.2)" : "rgba(0,122,255,0.15)") : bg },
-                      ]}
-                      onPress={() => setSelectedMedicalFolderId(f.id)}
-                    >
-                      <Text style={[styles.splitGroupName, { color: textPrimary }]}>{f.patientName}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-                <Text style={[styles.splitModalLabel, { color: textSecondary }]}>Items to add</Text>
-                {detailReceipt?.items && medicalSuggestions?.allItemIds && medicalSuggestions.allItemIds.length > 0 ? (
-                  <ScrollView style={{ maxHeight: 160 }} showsVerticalScrollIndicator={false}>
-                    {detailReceipt.items
-                      .filter((it) => it.id && medicalSuggestions!.allItemIds.includes(it.id))
-                      .map((it) => (
-                        <TouchableOpacity
-                          key={it.id}
-                          style={[styles.medicalItemRow, { backgroundColor: bg }]}
-                          onPress={() => {
-                            if (!it.id) return;
-                            setSelectedMedicalItemIds((prev) =>
-                              prev.includes(it.id!)
-                                ? prev.filter((id) => id !== it.id)
-                                : [...prev, it.id!]
-                            );
-                          }}
-                        >
-                          {selectedMedicalItemIds.includes(it.id!) ? (
-                            <Check size={20} color={IOS_BLUE} />
-                          ) : (
-                            <Circle size={20} color={textSecondary} />
-                          )}
-                          <Text style={[styles.medicalItemName, { color: textPrimary }]} numberOfLines={1}>
-                            {it.name ?? it.rawName ?? "Item"}
-                          </Text>
-                          <Text style={[styles.medicalItemPrice, { color: textSecondary }]}>
-                            ${typeof it.totalPrice === "number" ? it.totalPrice.toFixed(2) : "0.00"}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                  </ScrollView>
-                ) : (
-                  <Text style={[styles.splitModalHint, { color: textSecondary }]}>
-                    {medicalSuggestions?.rxItemIds?.length ? "Prescription-like items pre-selected." : "All items will be added."}
-                  </Text>
-                )}
-                <TouchableOpacity
-                  style={[styles.splitConfirmBtn, { backgroundColor: IOS_BLUE }]}
-                  disabled={!selectedMedicalFolderId || addToMedicalLoading}
-                  onPress={async () => {
-                    if (!detailReceipt?.id || !selectedMedicalFolderId) return;
-                    setAddToMedicalLoading(true);
-                    try {
-                      const result = await addReceiptToMedical(
-                        detailReceipt.id,
-                        selectedMedicalFolderId,
-                        selectedMedicalItemIds.length > 0 ? selectedMedicalItemIds : medicalSuggestions?.allItemIds ?? [],
-                        authToken
-                      );
-                      Alert.alert("Done", `Added ${result.addedCount} item(s) to ${result.patientName}.`);
-                      setAddToMedicalModal(false);
-                      setDetailReceipt(null);
-                    } catch (e) {
-                      Alert.alert("Error", e instanceof Error ? e.message : "Failed to add");
-                    } finally {
-                      setAddToMedicalLoading(false);
-                    }
-                  }}
-                >
-                  {addToMedicalLoading ? (
-                    <ActivityIndicator size="small" color="#FFF" />
-                  ) : (
-                    <Text style={styles.splitConfirmBtnText}>Add to folder</Text>
-                  )}
-                </TouchableOpacity>
-              </>
-            )}
           </View>
         </View>
       </Modal>
@@ -1206,26 +1064,4 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   approveBtnText: { color: "#FFF", fontSize: 16, fontWeight: "600" },
-  addToMedicalBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 12,
-    borderRadius: 12,
-    marginTop: 12,
-    borderWidth: 1.5,
-  },
-  addToMedicalBtnText: { fontSize: 16, fontWeight: "600" },
-  medicalItemRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    marginBottom: 6,
-    gap: 10,
-  },
-  medicalItemName: { flex: 1, fontSize: 14 },
-  medicalItemPrice: { fontSize: 14 },
 });
