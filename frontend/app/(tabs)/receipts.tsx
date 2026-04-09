@@ -14,6 +14,7 @@ type TxRow = {
   imageUrl: string | null;
   store: { name: string };
   items?: { category: string }[];
+  status?: string;
 };
 
 function formatDate(d: string): string {
@@ -132,6 +133,7 @@ export default function ReceiptsScreen() {
               imageUrl: (r.imageUrl as string | null) ?? null,
               store: (r.store as { name: string }) ?? { name: "Store" },
               items: r.items as { category: string }[] | undefined,
+              status: typeof r.status === "string" ? r.status : undefined,
             };
           });
           saveLocalTransactions(list);
@@ -238,6 +240,9 @@ export default function ReceiptsScreen() {
                     <Text style={[styles.receiptMeta, { color: textSecondary }]}>
                       {formatDate(r.date)} · {firstCategory(r.items)}
                     </Text>
+                    {r.status === "NEEDS_REVIEW" ? (
+                      <Text style={[styles.receiptMeta, { color: "#FF9500", fontWeight: "700" }]}>Review needed</Text>
+                    ) : null}
                   </View>
                   <Text style={[styles.receiptTotal, { color: textPrimary }]}>${Number(r.total).toFixed(2)}</Text>
                 </TouchableOpacity>

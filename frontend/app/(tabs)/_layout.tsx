@@ -1,21 +1,37 @@
 import { View } from "react-native";
 import { Tabs } from "expo-router";
 import { Home, Search, Camera, Users } from "lucide-react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "../../src/store/useStore";
 import { getTheme, IOS_BLUE } from "../../src/theme";
 
 export default function TabLayout() {
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
   const { bg, glass, textPrimary, textSecondary } = getTheme(isDarkMode);
+  const insets = useSafeAreaInsets();
+  const tabBarBottom = Math.max(12, insets.bottom + 8);
 
   return (
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: IOS_BLUE,
         tabBarInactiveTintColor: textSecondary,
+        tabBarHideOnKeyboard: true,
+        tabBarActiveBackgroundColor: "rgba(10,132,255,0.12)",
+        tabBarInactiveBackgroundColor: "transparent",
+        tabBarItemStyle: {
+          alignItems: "center",
+          justifyContent: "center",
+          borderRadius: 18,
+          marginHorizontal: 8,
+          marginVertical: 10,
+        },
+        tabBarIconStyle: {
+          alignSelf: "center",
+        },
         tabBarStyle: {
           position: "absolute",
-          bottom: 24,
+          bottom: tabBarBottom,
           left: 24,
           right: 24,
           elevation: 0,
@@ -46,6 +62,7 @@ export default function TabLayout() {
         options={{
           title: "Search",
           tabBarIcon: ({ color, size }) => <Search color={color} size={size} />,
+          headerShown: false,
         }}
       />
       <Tabs.Screen

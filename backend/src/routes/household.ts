@@ -143,7 +143,9 @@ router.post("/invite", async (req: AuthRequest, res: Response) => {
         expiresAt,
       },
     });
-    const inviteUrl = `${baseUrl(req)}/household/join/${invite.token}`;
+    // Prefer an in-app deep link. The client can also accept raw token for manual entry.
+    // Note: /api/household/join/:token is POST-only; a non-app web URL here would 404.
+    const inviteUrl = `smartbudget://household/join/${invite.token}`;
     res.status(201).json({ token: invite.token, inviteUrl, expiresAt: invite.expiresAt.toISOString() });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : "Failed to create invite" });
@@ -341,7 +343,6 @@ router.get("/receipts", async (req: AuthRequest, res: Response) => {
       where: {
         householdId: membership.householdId,
         visibilityType: ReceiptVisibility.HOUSEHOLD,
-        status: "VERIFIED",
       },
       include: { store: true, items: true, uploadedByUser: true },
       orderBy: { date: "desc" },

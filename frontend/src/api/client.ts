@@ -168,6 +168,29 @@ export async function getStores(idToken: string | null): Promise<StoreRow[]> {
   return res.json();
 }
 
+export type SearchStatsResponse = {
+  mostVisitedStore: { name: string; visits: number } | null;
+  topCategory: { name: string; amount: number } | null;
+  last30Days: { totalSpend: number; avgPerDay: number };
+  community: { weightedAvgPrice: number } | null;
+};
+
+export async function getSearchStats(idToken: string | null): Promise<SearchStatsResponse> {
+  try {
+    const res = await fetch(`${getBaseURL()}/api/transactions/search-stats`, {
+      method: "GET",
+      headers: authHeaders(idToken),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error((err as { error?: string }).error ?? "Failed to fetch search stats");
+    }
+    return res.json();
+  } catch (e) {
+    throw wrapNetworkError(e);
+  }
+}
+
 export async function getSummary(idToken: string | null): Promise<{
   totalSpent: number;
   totalStores: number;

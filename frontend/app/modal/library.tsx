@@ -97,7 +97,7 @@ function ReceiptThumbnail({
   bg: string;
   textPrimary: string;
   textSecondary: string;
-  onDeletePress: () => void;
+  onDeletePress?: () => void;
   children?: React.ReactNode;
 }) {
   const [dataUri, setDataUri] = useState<string | null>(null);
@@ -128,9 +128,15 @@ function ReceiptThumbnail({
           <Text style={[libraryStyles.placeholderTotal, { color: textPrimary }]}>{`$${total.toFixed(2)}`}</Text>
         </View>
       )}
-      <TouchableOpacity style={libraryStyles.trashBtn} onPress={onDeletePress} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-        <Trash2 size={20} color="#FFF" />
-      </TouchableOpacity>
+      {onDeletePress && (
+        <TouchableOpacity
+          style={libraryStyles.trashBtn}
+          onPress={onDeletePress}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Trash2 size={20} color="#FFF" />
+        </TouchableOpacity>
+      )}
       {children}
     </View>
   );
@@ -414,13 +420,17 @@ export default function LibraryModal() {
                           bg={bg}
                           textPrimary={textPrimary}
                           textSecondary={textSecondary}
-                          onDeletePress={() => {}}
                         />
                       </View>
                       <View style={styles.storeNameRow}>
                         <Text style={[styles.storeName, { color: textPrimary }]} numberOfLines={1}>
                           {storeName}
                         </Text>
+                        {r.status === "NEEDS_REVIEW" && (
+                          <View style={styles.needsReviewBadge}>
+                            <Text style={styles.needsReviewText}>Review</Text>
+                          </View>
+                        )}
                       </View>
                       <Text style={[styles.amount, { marginBottom: 2 }]}>${total.toFixed(2)}</Text>
                       <Text style={[styles.uploadedBy, { color: textSecondary }]} numberOfLines={1}>

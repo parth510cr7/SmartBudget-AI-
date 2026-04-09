@@ -39,6 +39,8 @@ export default function RootLayout() {
         <Stack.Screen name="modal/price-history-sharing" options={{ presentation: "modal", title: "Price history sharing" }} />
         <Stack.Screen name="group/[id]" />
         <Stack.Screen name="join/[token]" />
+        <Stack.Screen name="household" />
+        <Stack.Screen name="household/join/[token]" />
       </Stack>
     </ThemeWrapper>
   );

@@ -20,11 +20,48 @@ function round2(n: number): number {
  * Detect intent from natural query (lowercase, trimmed).
  * Returns a label we can switch on.
  */
+/**
+ * "Price of X at StoreA and StoreB" / "X at Costco vs Walmart" (item + two store hints).
+ */
+function extractItemPriceCompare(query: string): { item: string; storeA: string; storeB: string } | null {
+  const t = query.trim();
+  const trimTok = (s: string) => s.trim().replace(/[?.!,;:]+$/, "").trim();
+  // price of [item] at [store] and|vs [store]
+  let m = t.match(
+    /(?:what\s+(?:was|is)\s+)?(?:the\s+)?(?:price|cost)\s+of\s+(.+?)\s+at\s+(.+?)\s+(?:and|vs\.?|versus)\s+(.+)/i
+  );
+  if (m) {
+    const item = trimTok(m[1]);
+    const storeA = trimTok(m[2]);
+    const storeB = trimTok(m[3]);
+    if (item.length >= 2 && storeA.length >= 2 && storeB.length >= 2) return { item, storeA, storeB };
+  }
+  // [item] at [store] vs [store]
+  m = t.match(/^(.+?)\s+at\s+(.+?)\s+(?:vs\.?|versus|and)\s+(.+)/i);
+  if (m) {
+    const item = trimTok(m[1]);
+    const storeA = trimTok(m[2]);
+    const storeB = trimTok(m[3]);
+    if (
+      item.length >= 2 &&
+      storeA.length >= 2 &&
+      storeB.length >= 2 &&
+      !/\b(how much|spent|spend|total)\b/i.test(item)
+    ) {
+      return { item, storeA, storeB };
+    }
+  }
+  return null;
+}
+
 function detectIntent(q: string): string {
   const lower = q.toLowerCase().trim();
   if (!lower) return "general";
+  if (extractItemPriceCompare(q)) return "item_price_compare";
   // Safety: explicit category queries should never route to store intent.
   if (/\bcategory\b/.test(lower)) return "spend_by_category";
+  // Summaries / overview.
+  if (/\b(summarize|summary|overview|breakdown)\b/.test(lower) && /\b(spend|spent|spending|expenses?)\b/.test(lower)) return "general";
   // Single short item-like query (e.g. "milk", "eggs") should use item lookup instead of generic summary.
   if (lower.length <= 32 && !/\b(by|top|recent|group|shared|split)\b/.test(lower) && !/[?]/.test(lower)) {
     const wordCount = lower.split(/\s+/).filter(Boolean).length;
@@ -39,8 +76,12 @@ function detectIntent(q: string): string {
   // top category
   if (/\btop\s+category\b/.test(lower) || /\bhighest\s+category\b/.test(lower) || lower.includes("top category")) return "top_category";
   // recent purchase(s)
-  if (/\brecent\b/.test(lower) && (/\bpurchase\b/.test(lower) || /\breceipt\b/.test(lower) || /\btransaction\b/.test(lower) || /\bspending\b/.test(lower))) return "recent_purchase";
-  if (/\blast\s+(purchase|receipt|transaction)\b/.test(lower)) return "recent_purchase";
+  if (
+    /\b(recent|recently|lately)\b/.test(lower) &&
+    (/\b(purchase|purchases|bought|buy|receipt|receipts|transaction|transactions)\b/.test(lower) || /\bwhat\s+did\s+i\s+buy\b/.test(lower))
+  )
+    return "recent_purchase";
+  if (/\blast\s+(purchase|receipt|transaction|week|month)\b/.test(lower)) return "recent_purchase";
   // cheapest store for [item] / where to buy [item]
   const cheapestMatch = lower.match(/\b(cheapest|best\s+price|where\s+to\s+buy|price\s+of)\s+(?:store\s+for\s+)?(.+)/);
   if (cheapestMatch) return "cheapest_store";
@@ -163,6 +204,65 @@ export async function runAppQuery(userId: string, query: string): Promise<AppQue
   });
 
   switch (intent) {
+    case "item_price_compare": {
+      const triplet = extractItemPriceCompare(query);
+      if (!triplet) {
+        return {
+          answer:
+            'Try comparing like: "Price of apples at Walmart and Target" — use store names similar to those on your receipts.',
+        };
+      }
+      const { item, storeA, storeB } = triplet;
+      if (itemPrices.length === 0) {
+        return { answer: "No item-level prices yet. Scan receipts with line items to compare prices between stores." };
+      }
+      const itemH = item.toLowerCase();
+      const matchesItem = itemPrices.filter((p) => p.itemName.toLowerCase().includes(itemH) || itemH.includes(p.itemName.toLowerCase()));
+      if (matchesItem.length === 0) {
+        return { answer: `No prices found for "${item}". Try a shorter name or add receipts that include that item.` };
+      }
+      const pickAtStore = (storeHint: string) => {
+        const h = storeHint.toLowerCase().trim();
+        const atStore = matchesItem.filter(
+          (p) => p.storeName.toLowerCase().includes(h) || h.includes(p.storeName.toLowerCase())
+        );
+        if (atStore.length === 0) return null;
+        return atStore.sort((a, b) => a.unitPrice - b.unitPrice)[0];
+      };
+      const rowA = pickAtStore(storeA);
+      const rowB = pickAtStore(storeB);
+      if (!rowA && !rowB) {
+        return {
+          answer: `No receipts matching "${item}" at "${storeA}" or "${storeB}". Check spelling against stores on your receipts: ${byStore
+            .slice(0, 6)
+            .map((s) => s.storeName)
+            .join(", ")}.`,
+        };
+      }
+      const lines: string[] = [];
+      if (rowA) {
+        lines.push(`• ${rowA.storeName}: $${rowA.unitPrice.toFixed(2)}${rowA.unit ? ` per ${rowA.unit}` : ""} (${rowA.itemName})`);
+      } else {
+        lines.push(`• ${storeA}: no "${item}" price found in your history yet.`);
+      }
+      if (rowB) {
+        lines.push(`• ${rowB.storeName}: $${rowB.unitPrice.toFixed(2)}${rowB.unit ? ` per ${rowB.unit}` : ""} (${rowB.itemName})`);
+      } else {
+        lines.push(`• ${storeB}: no "${item}" price found in your history yet.`);
+      }
+      let diffLine = "";
+      if (rowA && rowB) {
+        const d = round2(rowA.unitPrice - rowB.unitPrice);
+        if (d === 0) diffLine = "\nSame unit price at both.";
+        else if (d < 0) diffLine = `\n${rowA.storeName} was $${Math.abs(d).toFixed(2)} lower per unit than ${rowB.storeName}.`;
+        else diffLine = `\n${rowB.storeName} was $${d.toFixed(2)} lower per unit than ${rowA.storeName}.`;
+      }
+      const basketHint = `\n\nWant this in your basket? Tap the basket icon to add "${item}", or list several items in one chat message. Then tap Finalize for a store total estimate.`;
+      return {
+        answer: `From your receipts — ${item}:\n\n${lines.join("\n")}${diffLine}${basketHint}`,
+        data: { cheapestStore: [rowA, rowB].filter(Boolean) as { itemName: string; storeName: string; unitPrice: number; unit?: string | null }[] },
+      };
+    }
     case "item_lookup": {
       const q = query.toLowerCase().trim();
       if (!q) return { answer: "Try searching for an item like \"milk\" or asking \"cheapest store for milk\"." };

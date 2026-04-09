@@ -57,18 +57,18 @@ async function main() {
 
   // 2) appQuery: spend by category should return array (can be empty if no receipts)
   {
-    const { res, json, text } = await httpJson("POST", "/api/appQuery", { query: "spend by category" });
-    if (!res.ok) return fail(`/api/appQuery HTTP ${res.status}: ${text.slice(0, 240)}`);
-    if (!json || typeof json.answer !== "string") return fail(`/api/appQuery missing answer: ${text.slice(0, 240)}`);
+    const { res, json, text } = await httpJson("POST", "/api/app-query", { query: "spend by category" });
+    if (!res.ok) return fail(`/api/app-query HTTP ${res.status}: ${text.slice(0, 240)}`);
+    if (!json || typeof json.answer !== "string") return fail(`/api/app-query missing answer: ${text.slice(0, 240)}`);
     if (json.data && json.data.byCategory && !Array.isArray(json.data.byCategory)) return fail("appQuery.data.byCategory is not an array");
     ok("appQuery spend by category");
   }
 
   // 3) appQuery: spend by store
   {
-    const { res, json, text } = await httpJson("POST", "/api/appQuery", { query: "spend by store" });
-    if (!res.ok) return fail(`/api/appQuery(store) HTTP ${res.status}: ${text.slice(0, 240)}`);
-    if (!json || typeof json.answer !== "string") return fail(`/api/appQuery(store) missing answer: ${text.slice(0, 240)}`);
+    const { res, json, text } = await httpJson("POST", "/api/app-query", { query: "spend by store" });
+    if (!res.ok) return fail(`/api/app-query(store) HTTP ${res.status}: ${text.slice(0, 240)}`);
+    if (!json || typeof json.answer !== "string") return fail(`/api/app-query(store) missing answer: ${text.slice(0, 240)}`);
     if (json.data && json.data.byStore && !Array.isArray(json.data.byStore)) return fail("appQuery.data.byStore is not an array");
     ok("appQuery spend by store");
   }

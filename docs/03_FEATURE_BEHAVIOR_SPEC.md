@@ -9,10 +9,10 @@ This file is the practical product-spec: how the app is supposed to behave tab b
 
 | Field | Value |
 |-------|--------|
-| **Last updated** | 2025-03-05 |
+| **Last updated** | 2026-04-08 |
 | **App version / build / commit** | Build/commit not recorded in current docs |
-| **Updated by** | Phase 1 Documentation Refinement (Truth-Alignment Pass) |
-| **Status of confidence** | Partially verified |
+| **Updated by** | Automated truth-alignment (MCP + repo) |
+| **Status of confidence** | Partially verified (MCP-verified appendix added) |
 
 ---
 
@@ -21,6 +21,63 @@ This file is the practical product-spec: how the app is supposed to behave tab b
 - **Not all features are fully implemented.** Do not assume a feature works because it appears in the UI. Check the status labels in each section and the "Important product constraints" section.
 - **For current weak spots and remaining issues,** use **`docs/04_AUDIT_FIXES_AND_ROADMAP.md`** as the authoritative source. That file lists symptoms, root causes, and priorities; this file describes expected behavior and implementation status.
 - Use strict certainty tags where used: **Needs verification**, **Partially verified**, **Unclear from current implementation**. Do not invent certainty.
+
+---
+
+## MCP-verified snapshot (live environment + DB)
+
+**Date captured:** 2026-04-08  
+**Sources:** Supabase MCP (`project-0-SmartBudgetAI-supabase`) + Firebase MCP (`project-0-SmartBudgetAI-firebase`)  
+
+### Firebase (Auth / hosting)
+
+- **Active Firebase project ID**: `gen-lang-client-0109962256` (alias: `default`)
+- **Authenticated CLI/MCP user**: `parth510cr7@gmail.com`
+- **Billing enabled**: No
+- **Hosting root**: `firebase-public/` (from `firebase.json`)
+- **Detected App IDs**: `<NONE>` (MCP did not detect registered app IDs)
+
+### Database (Supabase Postgres)
+
+**Notes:**
+- Row counts below are *current contents* and will change over time. They are useful to sanity-check “is this feature being used in this environment?”.
+- RLS is currently **disabled** on these tables (per MCP `list_tables` output); access control is enforced by the backend API layer.
+
+**Core spending tables (non-empty):**
+- `User` (105), `Store` (177), `Receipt` (146), `Item` (264)
+- `PriceRecord` (702)
+
+**Collaboration + saved lists tables (present but currently empty in this DB snapshot):**
+- Groups: `Group`, `GroupMember`, `Expense`, `ExpenseSplit`, `Balance`, `Payment`, `ActivityLog`, `GroupInviteLink` (0 rows)
+- Household: `Household`, `HouseholdMember`, `HouseholdInvite` (0 rows)
+- Smart lists: `SmartList`, `SmartListItem` (0 rows)
+- Basket personalization: `BasketTermPreference` (0 rows)
+
+### DB enums (meaningful “truth” for behavior)
+
+- **`ReceiptVisibility`**: `PERSONAL` | `HOUSEHOLD`
+- **`ShareMode`** (for `PriceRecord.shareMode`): `NONE` | `PRIVATE` | `GROUP` | `COMMUNITY`
+
+### DB relationship highlights (what links to what)
+
+- **Receipts**
+  - `Receipt.userId -> User.id`
+  - `Receipt.storeId -> Store.id`
+  - optional: `Receipt.groupId -> Group.id`
+  - optional: `Receipt.householdId -> Household.id`
+  - optional: `Receipt.uploadedByUserId -> User.id` (used for household attribution)
+- **Items**
+  - `Item.receiptId -> Receipt.id`
+- **Groups ledger**
+  - `Group.ownerId -> User.id`
+  - `GroupMember.groupId -> Group.id`, `GroupMember.userId -> User.id`
+  - `Expense.groupId -> Group.id`, `Expense.paidByUserId -> User.id`, optional `Expense.receiptId -> Receipt.id`
+  - `ExpenseSplit.expenseId -> Expense.id`, `ExpenseSplit.userId -> User.id`
+- **Household**
+  - `Household.ownerUserId -> User.id`
+  - `HouseholdMember.householdId -> Household.id`, `HouseholdMember.userId -> User.id`
+
+**Interpretation tip:** If the UI shows a feature but its backing tables are empty in the active environment, that feature may be implemented but simply unused (or you’re pointing at a “demo” DB).
 
 ---
 
