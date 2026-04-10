@@ -29,6 +29,7 @@ import {
 import {
   type ChatMessage,
   type ChatEngine,
+  buildBasketFinalizeMessage,
   cleanAnswer,
   fmtMoney,
   looksLikeBasketList,
@@ -156,16 +157,9 @@ export default function SearchScreen() {
     setInsightsLoading(true);
     try {
       const res = await getBasketInsights(authToken ?? null, { itemNames: basket });
-      const best = res.bestTotalStore;
-      const estimate = best?.estimatedTotal ?? res.estimatedTotalKnownData ?? null;
-      const store = best?.storeName ?? res.bestStore?.storeName ?? null;
-      const parts = [
-        store ? `Best store: ${store}` : null,
-        typeof estimate === "number" && Number.isFinite(estimate) ? `Estimated total: $${estimate.toFixed(2)}` : null,
-      ].filter(Boolean);
       appendMessage({
         role: "assistant",
-        text: parts.length ? parts.join("\n") : "I couldn’t estimate a total from your current data yet — try refining item names.",
+        text: buildBasketFinalizeMessage(res),
       });
     } catch (e) {
       appendMessage({

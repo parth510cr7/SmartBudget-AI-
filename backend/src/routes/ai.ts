@@ -59,7 +59,11 @@ router.post("/chat", async (req: AuthRequest, res: Response) => {
     const q = userMessage || "summary";
     const app = await runAppQuery(user.id, q);
     const context = buildReceiptContext(receipts);
-    const reply = [app.answer, "", "—", "", "Data source: your verified receipts.", `Receipts analyzed: ${receipts.length}.`].join("\n");
+    const receiptLine =
+      receipts.length === 0
+        ? "Add a few verified receipts to get richer answers."
+        : `Based on ${receipts.length} receipt${receipts.length === 1 ? "" : "s"} in your library.`;
+    const reply = [app.answer, "", receiptLine].join("\n");
     res.json({
       reply,
       data: app.data,
