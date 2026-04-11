@@ -3,7 +3,8 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Activi
 import { useRouter } from "expo-router";
 import { X } from "lucide-react-native";
 import { useStore } from "../../src/store/useStore";
-import { getTheme, IOS_BLUE } from "../../src/theme";
+import { GlassSurface } from "../../src/components/GlassSurface";
+import { getTheme, IOS_BLUE, LIQUID } from "../../src/theme";
 import { createPrivatePriceShare, type CreatePrivatePriceSharePayload } from "../../src/api/client";
 
 const SCOPES: { value: CreatePrivatePriceSharePayload["shareScope"]; label: string }[] = [
@@ -18,7 +19,7 @@ export default function PriceHistorySharingModal() {
   const router = useRouter();
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
   const authToken = useStore((s) => (s.user as { idToken?: string } | null)?.idToken ?? null);
-  const { bg, glass, textPrimary, textSecondary } = getTheme(isDarkMode);
+  const { bg, textPrimary, textSecondary } = getTheme(isDarkMode);
   const [targetUserId, setTargetUserId] = useState("");
   const [scope, setScope] = useState<CreatePrivatePriceSharePayload["shareScope"]>("ALL");
   const [submitting, setSubmitting] = useState(false);
@@ -54,15 +55,17 @@ export default function PriceHistorySharingModal() {
           Share your receipt-based price history with another SmartBudget user. They will see your prices when finalizing a basket. You need their SmartBudget user ID (they can find it in their Profile).
         </Text>
         <Text style={[styles.label, { color: textSecondary }]}>Their user ID</Text>
-        <TextInput
-          style={[styles.input, { backgroundColor: glass, color: textPrimary }]}
-          placeholder="e.g. abc123..."
-          placeholderTextColor={textSecondary}
-          value={targetUserId}
-          onChangeText={setTargetUserId}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
+        <GlassSurface isDark={isDarkMode} borderRadius={12} style={[LIQUID.shadow, styles.inputGlass]}>
+          <TextInput
+            style={[styles.input, { color: textPrimary }]}
+            placeholder="e.g. abc123..."
+            placeholderTextColor={textSecondary}
+            value={targetUserId}
+            onChangeText={setTargetUserId}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </GlassSurface>
         <Text style={[styles.label, { color: textSecondary }]}>Scope</Text>
         <View style={styles.scopeRow}>
           {SCOPES.map((s) => (
@@ -103,7 +106,8 @@ const styles = StyleSheet.create({
   content: { padding: 20, paddingBottom: 40 },
   paragraph: { fontSize: 16, lineHeight: 24, marginBottom: 16 },
   label: { fontSize: 14, fontWeight: "600", marginBottom: 8 },
-  input: { height: 48, borderRadius: 12, paddingHorizontal: 14, fontSize: 16, marginBottom: 20 },
+  inputGlass: { marginBottom: 20 },
+  input: { height: 48, paddingHorizontal: 14, fontSize: 16 },
   scopeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 20 },
   scopeChip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20 },
   scopeChipText: { fontSize: 14, fontWeight: "500" },

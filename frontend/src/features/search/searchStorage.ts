@@ -1,12 +1,16 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { ChatMessage, ChatEngine } from "./searchUtils";
+import type { ChatMessage } from "./searchUtils";
 
 const STORAGE_KEY = "smartbudget_search_chat_v1";
+
 const MAX_MESSAGES = 100;
+
+/** Insights = analytics only. Chat = messages + composer. */
+export type SearchScreenMode = "insights" | "chat";
 
 export type PersistedSearchState = {
   messages: ChatMessage[];
-  chatEngine: ChatEngine;
+  searchMode?: SearchScreenMode;
 };
 
 function sanitizeMessages(raw: unknown): ChatMessage[] {
@@ -38,10 +42,10 @@ export async function loadSearchChatState(): Promise<PersistedSearchState | null
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<PersistedSearchState>;
+    const parsed = JSON.parse(raw) as Partial<PersistedSearchState> & { chatEngine?: unknown };
     const messages = sanitizeMessages(parsed.messages);
-    const chatEngine: ChatEngine = parsed.chatEngine === "general" ? "general" : "data";
-    return { messages, chatEngine };
+    const searchMode: SearchScreenMode = parsed.searchMode === "chat" ? "chat" : "insights";
+    return { messages, searchMode };
   } catch {
     return null;
   }

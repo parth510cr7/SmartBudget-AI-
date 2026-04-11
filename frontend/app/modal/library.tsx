@@ -30,7 +30,8 @@ import {
   type HouseholdReceiptRow,
 } from "../../src/api/client";
 import { useStore } from "../../src/store/useStore";
-import { getTheme, IOS_BLUE } from "../../src/theme";
+import { GlassSurface } from "../../src/components/GlassSurface";
+import { getTheme, IOS_BLUE, LIQUID, RADIUS } from "../../src/theme";
 
 function triggerDashboardRefresh() {
   useStore.getState().triggerDashboardRefresh();
@@ -164,7 +165,7 @@ const libraryStyles = StyleSheet.create({
 export default function LibraryModal() {
   const router = useRouter();
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
-  const { bg, glass, textPrimary, textSecondary } = getTheme(isDarkMode);
+  const { bg, textPrimary, textSecondary } = getTheme(isDarkMode);
   const authToken = useStore((s) => (s.user as { idToken?: string } | null)?.idToken ?? null);
   const currentUserId = useStore((s) => s.user?.id ?? null);
   const [receipts, setReceipts] = useState<ReceiptWithStore[]>([]);
@@ -311,25 +312,31 @@ export default function LibraryModal() {
     <View style={[styles.container, { backgroundColor: bg }]}>
       <View style={styles.header}>
         <Text style={[styles.headerTitle, { color: textPrimary }]}>Receipt Library</Text>
-        <TouchableOpacity style={[styles.closeBtn, { backgroundColor: glass }]} onPress={() => router.back()}>
-          <X size={24} color={textPrimary} />
+        <TouchableOpacity onPress={() => router.back()} activeOpacity={0.85} style={styles.closeBtnWrap}>
+          <GlassSurface isDark={isDarkMode} borderRadius={22} style={[LIQUID.shadow, styles.closeBtn]}>
+            <View style={styles.closeBtnInner}>
+              <X size={24} color={textPrimary} />
+            </View>
+          </GlassSurface>
         </TouchableOpacity>
       </View>
 
-      <View style={[styles.searchRow, { backgroundColor: glass }]}>
-        <TextInput
-          style={[styles.searchInput, { color: textPrimary, backgroundColor: bg }]}
-          placeholder="Search by store or item name..."
-          placeholderTextColor={textSecondary}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          onSubmitEditing={() => refresh(searchQuery)}
-          returnKeyType="search"
-        />
-        <TouchableOpacity style={[styles.searchBtn, { backgroundColor: IOS_BLUE }]} onPress={() => refresh(searchQuery)} disabled={loading}>
-          <Text style={styles.searchBtnText}>Search</Text>
-        </TouchableOpacity>
-      </View>
+      <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.button} style={[LIQUID.shadow, styles.searchRow]}>
+        <View style={styles.searchRowInner}>
+          <TextInput
+            style={[styles.searchInput, { color: textPrimary, backgroundColor: bg }]}
+            placeholder="Search by store or item name..."
+            placeholderTextColor={textSecondary}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            onSubmitEditing={() => refresh(searchQuery)}
+            returnKeyType="search"
+          />
+          <TouchableOpacity style={[styles.searchBtn, { backgroundColor: IOS_BLUE }]} onPress={() => refresh(searchQuery)} disabled={loading}>
+            <Text style={styles.searchBtnText}>Search</Text>
+          </TouchableOpacity>
+        </View>
+      </GlassSurface>
 
       {loading ? (
         <View style={styles.centered}>
@@ -350,7 +357,7 @@ export default function LibraryModal() {
             const total = typeof r.total === "number" && Number.isFinite(r.total) ? r.total : 0;
             const storeName = r.store?.name ?? "Store";
             return (
-            <View key={r.id} style={[styles.card, { backgroundColor: glass }]}>
+            <GlassSurface key={r.id} isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.card]}>
               <TouchableOpacity onPress={() => setDetailReceipt(r)} activeOpacity={0.8} style={styles.cardTappable}>
                 <View style={[styles.imageWrap, { backgroundColor: bg }]}>
                   <ReceiptThumbnail
@@ -385,7 +392,7 @@ export default function LibraryModal() {
                 <Users size={16} color={IOS_BLUE} />
                 <Text style={styles.splitBtnText}>Split with Group</Text>
               </TouchableOpacity>
-            </View>
+            </GlassSurface>
           );
           })}
           {householdReceipts.length > 0 && (
@@ -408,7 +415,7 @@ export default function LibraryModal() {
                   uploadedBy: r.uploadedBy,
                 };
                 return (
-                  <View key={`household-${r.id}`} style={[styles.card, { backgroundColor: glass }]}>
+                  <GlassSurface key={`household-${r.id}`} isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.card]}>
                     <TouchableOpacity onPress={() => setDetailReceipt(asDetail)} activeOpacity={0.8} style={styles.cardTappable}>
                       <View style={[styles.imageWrap, { backgroundColor: bg }]}>
                         <ReceiptThumbnail
@@ -437,7 +444,7 @@ export default function LibraryModal() {
                         Uploaded by {r.uploadedBy?.name ?? "Household"}
                       </Text>
                     </TouchableOpacity>
-                  </View>
+                  </GlassSurface>
                 );
               })}
             </>
@@ -447,7 +454,7 @@ export default function LibraryModal() {
 
       <Modal visible={!!detailReceipt} transparent animationType="fade">
         <View style={styles.detailModalOverlay}>
-          <View style={[styles.detailModalCard, { backgroundColor: glass }]}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.detailModalCard]}>
             <View style={styles.detailModalHeader}>
               <Text style={[styles.detailModalTitle, { color: textPrimary }]} numberOfLines={1}>
                 {detailReceipt?.store?.name ?? "Receipt"}
@@ -587,13 +594,13 @@ export default function LibraryModal() {
                 </View>
               </ScrollView>
             )}
-          </View>
+          </GlassSurface>
         </View>
       </Modal>
 
       <Modal visible={dateEditOpen && !!detailReceipt} transparent animationType="fade">
         <View style={styles.splitModalOverlay}>
-          <View style={[styles.splitModalCard, { backgroundColor: glass }]}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.splitModalCard]}>
             <View style={styles.splitModalHeader}>
               <Text style={[styles.splitModalTitle, { color: textPrimary, flex: 1 }]}>Edit receipt date</Text>
               <TouchableOpacity onPress={() => setDateEditOpen(false)} hitSlop={12}>
@@ -635,13 +642,13 @@ export default function LibraryModal() {
             >
               {dateEditSaving ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.approveBtnText}>Save date</Text>}
             </TouchableOpacity>
-          </View>
+          </GlassSurface>
         </View>
       </Modal>
 
       <Modal visible={!!editingCategoryItemId && !!detailReceipt} transparent animationType="fade">
         <View style={styles.splitModalOverlay}>
-          <View style={[styles.splitModalCard, { backgroundColor: glass }]}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.splitModalCard]}>
             <View style={styles.splitModalHeader}>
               <Text style={[styles.splitModalTitle, { color: textPrimary, flex: 1 }]}>Change category</Text>
               <TouchableOpacity onPress={() => setEditingCategoryItemId(null)} hitSlop={12}>
@@ -682,13 +689,13 @@ export default function LibraryModal() {
                 </TouchableOpacity>
               ))}
             </ScrollView>
-          </View>
+          </GlassSurface>
         </View>
       </Modal>
 
       <Modal visible={!!splitModalReceipt} transparent animationType="fade">
         <View style={styles.splitModalOverlay}>
-          <View style={[styles.splitModalCard, { backgroundColor: glass }]}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.splitModalCard]}>
             <View style={styles.splitModalHeader}>
               {selectedGroup ? (
                 <TouchableOpacity onPress={() => { setSelectedGroup(null); setGroupMembers([]); }} hitSlop={12}>
@@ -841,7 +848,7 @@ export default function LibraryModal() {
                 )}
               </>
             )}
-          </View>
+          </GlassSurface>
         </View>
       </Modal>
     </View>
@@ -859,20 +866,25 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
   },
   headerTitle: { fontSize: 28, fontWeight: "800" },
+  closeBtnWrap: { zIndex: 2 },
   closeBtn: {
     width: 44,
     height: 44,
-    borderRadius: 22,
+  },
+  closeBtnInner: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.5)",
   },
   searchRow: {
+    marginHorizontal: 20,
+    marginBottom: 8,
+  },
+  searchRowInner: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingVertical: 12,
   },
   searchInput: {

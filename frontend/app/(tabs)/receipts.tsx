@@ -4,7 +4,8 @@ import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Store, Trash2, Info } from "lucide-react-native";
 import { getTransactions, deleteTransaction, getReceiptDebug } from "../../src/api/client";
 import { useStore } from "../../src/store/useStore";
-import { getTheme, IOS_BLUE } from "../../src/theme";
+import { GlassSurface } from "../../src/components/GlassSurface";
+import { getTheme, IOS_BLUE, LIQUID } from "../../src/theme";
 import { getLocalTransactions, saveLocalTransactions } from "../../src/lib/localDb";
 
 type TxRow = {
@@ -70,7 +71,7 @@ export default function ReceiptsScreen() {
   const params = useLocalSearchParams<{ store?: string }>();
   const storeFilter = typeof params.store === "string" ? params.store.trim() : "";
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
-  const { bg, glass, textPrimary, textSecondary } = getTheme(isDarkMode);
+  const { bg, textPrimary, textSecondary } = getTheme(isDarkMode);
   const authToken = useStore((s) => (s.user as { idToken?: string } | null)?.idToken ?? null);
   const refreshKey = useStore((s) => s.refreshKey ?? 0);
   const [selectedMonthYear, setSelectedMonthYear] = useState("all");
@@ -177,7 +178,6 @@ export default function ReceiptsScreen() {
 
         {lastParsed && (lastParsed.storeName ?? lastParsed.chosenTotal != null) && (
           <TouchableOpacity
-            style={[styles.lastParsedCard, { backgroundColor: glass }]}
             onPress={() => {
               const items = lastParsed.items ?? [];
               const lines = items.length
@@ -189,13 +189,17 @@ export default function ReceiptsScreen() {
                 [{ text: "OK" }]
               );
             }}
-            activeOpacity={0.8}
+            activeOpacity={0.85}
           >
-            <Info size={18} color={IOS_BLUE} style={styles.lastParsedIcon} />
-            <Text style={[styles.lastParsedLabel, { color: textSecondary }]}>Last parsed</Text>
-            <Text style={[styles.lastParsedValue, { color: textPrimary }]}>
-              {lastParsed.storeName ?? "Store"} · ${Number(lastParsed.chosenTotal ?? 0).toFixed(2)} · {lastParsed.itemCount ?? 0} items
-            </Text>
+            <GlassSurface isDark={isDarkMode} borderRadius={12} style={[LIQUID.shadow, styles.lastParsedCard]}>
+              <View style={styles.lastParsedInner}>
+                <Info size={18} color={IOS_BLUE} style={styles.lastParsedIcon} />
+                <Text style={[styles.lastParsedLabel, { color: textSecondary }]}>Last parsed</Text>
+                <Text style={[styles.lastParsedValue, { color: textPrimary }]}>
+                  {lastParsed.storeName ?? "Store"} · ${Number(lastParsed.chosenTotal ?? 0).toFixed(2)} · {lastParsed.itemCount ?? 0} items
+                </Text>
+              </View>
+            </GlassSurface>
           </TouchableOpacity>
         )}
 
@@ -205,18 +209,26 @@ export default function ReceiptsScreen() {
           contentContainerStyle={styles.chipsRow}
           style={styles.chipsScroll}
         >
-          {monthYearOptions.map(({ value, label }) => (
-            <TouchableOpacity
-              key={value}
-              style={[styles.chip, { backgroundColor: glass }, selectedMonthYear === value && styles.chipActive]}
-              onPress={() => setSelectedMonthYear(value)}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.chipText, { color: textPrimary }, selectedMonthYear === value && styles.chipTextActive]}>
-                {label}
-              </Text>
-            </TouchableOpacity>
-          ))}
+          {monthYearOptions.map(({ value, label }) =>
+            selectedMonthYear === value ? (
+              <TouchableOpacity
+                key={value}
+                style={[styles.chip, styles.chipActive]}
+                onPress={() => setSelectedMonthYear(value)}
+                activeOpacity={0.85}
+              >
+                <Text style={[styles.chipText, styles.chipTextActive]}>{label}</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity key={value} onPress={() => setSelectedMonthYear(value)} activeOpacity={0.85}>
+                <GlassSurface isDark={isDarkMode} borderRadius={20} style={LIQUID.shadow}>
+                  <View style={styles.chipInner}>
+                    <Text style={[styles.chipText, { color: textPrimary }]}>{label}</Text>
+                  </View>
+                </GlassSurface>
+              </TouchableOpacity>
+            )
+          )}
         </ScrollView>
 
         <View style={styles.cardList}>
@@ -230,30 +242,32 @@ export default function ReceiptsScreen() {
             </View>
           ) : (
             filteredAndSorted.map((r) => (
-              <View key={r.id} style={[styles.receiptCard, { backgroundColor: glass }]}>
-                <TouchableOpacity style={styles.receiptCardMain} activeOpacity={0.8}>
-                  <View style={[styles.receiptIconWrap, { backgroundColor: bg }]}>
-                    <Store size={24} color={IOS_BLUE} />
-                  </View>
-                  <View style={styles.receiptBody}>
-                    <Text style={[styles.receiptStore, { color: textPrimary }]}>{r.store?.name ?? "Store"}</Text>
-                    <Text style={[styles.receiptMeta, { color: textSecondary }]}>
-                      {formatDate(r.date)} · {firstCategory(r.items)}
-                    </Text>
-                    {r.status === "NEEDS_REVIEW" ? (
-                      <Text style={[styles.receiptMeta, { color: "#FF9500", fontWeight: "700" }]}>Review needed</Text>
-                    ) : null}
-                  </View>
-                  <Text style={[styles.receiptTotal, { color: textPrimary }]}>${Number(r.total).toFixed(2)}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.deleteBtn, { backgroundColor: bg }]}
-                  onPress={() => handleDeleteReceipt(r)}
-                  hitSlop={12}
-                >
-                  <Trash2 size={20} color="#DC2626" />
-                </TouchableOpacity>
-              </View>
+              <GlassSurface key={r.id} isDark={isDarkMode} borderRadius={16} style={[LIQUID.shadow, styles.receiptCard]}>
+                <View style={styles.receiptCardRow}>
+                  <TouchableOpacity style={styles.receiptCardMain} activeOpacity={0.8}>
+                    <View style={[styles.receiptIconWrap, { backgroundColor: bg }]}>
+                      <Store size={24} color={IOS_BLUE} />
+                    </View>
+                    <View style={styles.receiptBody}>
+                      <Text style={[styles.receiptStore, { color: textPrimary }]}>{r.store?.name ?? "Store"}</Text>
+                      <Text style={[styles.receiptMeta, { color: textSecondary }]}>
+                        {formatDate(r.date)} · {firstCategory(r.items)}
+                      </Text>
+                      {r.status === "NEEDS_REVIEW" ? (
+                        <Text style={[styles.receiptMeta, { color: "#FF9500", fontWeight: "700" }]}>Review needed</Text>
+                      ) : null}
+                    </View>
+                    <Text style={[styles.receiptTotal, { color: textPrimary }]}>${Number(r.total).toFixed(2)}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.deleteBtn, { backgroundColor: bg }]}
+                    onPress={() => handleDeleteReceipt(r)}
+                    hitSlop={12}
+                  >
+                    <Trash2 size={20} color="#DC2626" />
+                  </TouchableOpacity>
+                </View>
+              </GlassSurface>
             ))
           )}
         </View>
@@ -269,13 +283,12 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 20, paddingTop: 56, paddingBottom: 120 },
   header: { fontSize: 34, fontWeight: "800", marginBottom: 20 },
   lastParsedCard: {
+    marginBottom: 16,
+  },
+  lastParsedInner: {
     flexDirection: "row",
     alignItems: "center",
     padding: 12,
-    borderRadius: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.5)",
   },
   lastParsedIcon: { marginRight: 8 },
   lastParsedLabel: { fontSize: 12, marginRight: 6 },
@@ -286,8 +299,10 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 18,
     borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.5)",
+  },
+  chipInner: {
+    paddingVertical: 12,
+    paddingHorizontal: 18,
   },
   chipActive: { backgroundColor: IOS_BLUE, borderColor: IOS_BLUE },
   chipText: { fontSize: 15, fontWeight: "600" },
@@ -297,18 +312,12 @@ const styles = StyleSheet.create({
   emptyStateWrap: { flex: 1, justifyContent: "center", alignItems: "center", paddingVertical: 48 },
   emptyStateText: { fontSize: 16, textAlign: "center" },
   receiptCard: {
+    marginBottom: 12,
+    overflow: "hidden",
+  },
+  receiptCardRow: {
     flexDirection: "row",
     alignItems: "center",
-    borderRadius: 16,
-    marginBottom: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.5)",
-    overflow: "hidden",
   },
   receiptCardMain: {
     flexDirection: "row",

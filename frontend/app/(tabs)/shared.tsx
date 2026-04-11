@@ -18,7 +18,8 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { Users, Plus, X, Trash2, Link, Contact, UserPlus, Home } from "lucide-react-native";
 import { getGroups, createGroup, deleteGroup, createGroupInviteLink, type GroupRow } from "../../src/api/client";
 import { useStore } from "../../src/store/useStore";
-import { getTheme, IOS_BLUE, SPACING, RADIUS } from "../../src/theme";
+import { GlassSurface } from "../../src/components/GlassSurface";
+import { getTheme, IOS_BLUE, SPACING, RADIUS, LIQUID } from "../../src/theme";
 
 const GROUP_TYPES = ["Office", "Trip", "Party", "Other"] as const;
 const SIRI_GLOW_COLORS = ["#00D4FF", "#FF00AA", "#FFD60A", "#BF5AF2"] as const;
@@ -27,7 +28,7 @@ export default function SharedTabScreen() {
   const router = useRouter();
   const authToken = useStore((s) => (s.user as { idToken?: string } | null)?.idToken ?? null);
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
-  const { bg, glass, textPrimary, textSecondary } = getTheme(isDarkMode);
+  const { bg, textPrimary, textSecondary } = getTheme(isDarkMode);
   const [groups, setGroups] = useState<GroupRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -134,18 +135,18 @@ export default function SharedTabScreen() {
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity
-        style={[styles.householdCard, { backgroundColor: glass }]}
-        onPress={() => router.push("/household")}
-        activeOpacity={0.85}
-      >
-        <Home size={22} color={IOS_BLUE} />
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.householdTitle, { color: textPrimary }]}>Household</Text>
-          <Text style={[styles.householdSub, { color: textSecondary }]} numberOfLines={2}>
-            Up to 5 people under one roof. Each receipt can be saved as Personal or Household.
-          </Text>
-        </View>
+      <TouchableOpacity onPress={() => router.push("/household")} activeOpacity={0.85}>
+        <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.householdCardOuter]}>
+          <View style={styles.householdCardInner}>
+            <Home size={22} color={IOS_BLUE} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.householdTitle, { color: textPrimary }]}>Household</Text>
+              <Text style={[styles.householdSub, { color: textSecondary }]} numberOfLines={2}>
+                Up to 5 people under one roof. Each receipt can be saved as Personal or Household.
+              </Text>
+            </View>
+          </View>
+        </GlassSurface>
       </TouchableOpacity>
 
       {error ? (
@@ -164,38 +165,40 @@ export default function SharedTabScreen() {
             <Text style={[styles.emptyText, { color: textSecondary }]}>No groups yet. Tap "Create New Group" to start.</Text>
           }
           renderItem={({ item: g }) => (
-            <View style={[styles.groupCard, { backgroundColor: glass }]}>
-              <TouchableOpacity
-                style={styles.groupCardMain}
-                onPress={() => router.push(`/group/${g.id}`)}
-                activeOpacity={0.8}
-              >
-                <Users size={22} color={IOS_BLUE} />
-                <View style={styles.groupCardBody}>
-                  <Text style={[styles.groupName, { color: textPrimary }]} numberOfLines={1}>{g.name}</Text>
-                  <Text style={[styles.groupMeta, { color: textSecondary }]}>{g.isOwner ? "Owner" : "Member"}</Text>
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.groupCardIconBtn}
-                onPress={() => {
-                  Alert.alert("Delete group", "Remove this group from your list? You can only delete groups you own.", [
-                    { text: "Cancel", style: "cancel" },
-                    { text: "Delete", style: "destructive", onPress: () => handleDeleteGroup(g.id) },
-                  ]);
-                }}
-                hitSlop={8}
-              >
-                <Trash2 size={20} color={textSecondary} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.groupCardIconBtn}
-                onPress={() => setInviteOptionsGroupId(g.id)}
-                hitSlop={8}
-              >
-                <Plus size={22} color={IOS_BLUE} />
-              </TouchableOpacity>
-            </View>
+            <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.groupCardOuter]}>
+              <View style={styles.groupCardInner}>
+                <TouchableOpacity
+                  style={styles.groupCardMain}
+                  onPress={() => router.push(`/group/${g.id}`)}
+                  activeOpacity={0.8}
+                >
+                  <Users size={22} color={IOS_BLUE} />
+                  <View style={styles.groupCardBody}>
+                    <Text style={[styles.groupName, { color: textPrimary }]} numberOfLines={1}>{g.name}</Text>
+                    <Text style={[styles.groupMeta, { color: textSecondary }]}>{g.isOwner ? "Owner" : "Member"}</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.groupCardIconBtn}
+                  onPress={() => {
+                    Alert.alert("Delete group", "Remove this group from your list? You can only delete groups you own.", [
+                      { text: "Cancel", style: "cancel" },
+                      { text: "Delete", style: "destructive", onPress: () => handleDeleteGroup(g.id) },
+                    ]);
+                  }}
+                  hitSlop={8}
+                >
+                  <Trash2 size={20} color={textSecondary} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.groupCardIconBtn}
+                  onPress={() => setInviteOptionsGroupId(g.id)}
+                  hitSlop={8}
+                >
+                  <Plus size={22} color={IOS_BLUE} />
+                </TouchableOpacity>
+              </View>
+            </GlassSurface>
           )}
         />
       )}
@@ -302,7 +305,7 @@ export default function SharedTabScreen() {
                 style={StyleSheet.absoluteFill}
               />
             </Animated.View>
-            <View style={[styles.modalCard, { backgroundColor: glass }]}>
+            <GlassSurface isDark={isDarkMode} borderRadius={24} style={[LIQUID.shadow, styles.modalCard]}>
               <View style={styles.modalHeader}>
                 <Text style={[styles.modalTitle, { color: textPrimary }]}>New group</Text>
                 <TouchableOpacity onPress={() => !creating && setCreateModalVisible(false)} hitSlop={12}>
@@ -343,7 +346,7 @@ export default function SharedTabScreen() {
                   <Text style={styles.modalSubmitText}>Create Group</Text>
                 )}
               </TouchableOpacity>
-            </View>
+            </GlassSurface>
           </View>
         </View>
       </Modal>
@@ -365,28 +368,26 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.button,
   },
   createBtnText: { color: "#FFF", fontSize: 16, fontWeight: "600" },
-  householdCard: {
+  householdCardOuter: {
+    marginHorizontal: SPACING.pageHorizontal,
+    marginBottom: 12,
+  },
+  householdCardInner: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
     padding: SPACING.cardPadding,
-    borderRadius: RADIUS.card,
-    marginHorizontal: SPACING.pageHorizontal,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.3)",
   },
   householdTitle: { fontSize: 17, fontWeight: "800" },
   householdSub: { fontSize: 13, marginTop: 2, lineHeight: 18 },
   listContent: { paddingHorizontal: SPACING.pageHorizontal, paddingBottom: 120 },
-  groupCard: {
+  groupCardOuter: {
+    marginBottom: 12,
+  },
+  groupCardInner: {
     flexDirection: "row",
     alignItems: "center",
-    borderRadius: RADIUS.card,
     padding: SPACING.cardPadding,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.3)",
   },
   groupCardMain: { flex: 1, flexDirection: "row", alignItems: "center" },
   groupCardIconBtn: { padding: 8, marginLeft: 4 },
@@ -431,7 +432,7 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     overflow: "hidden",
   },
-  modalCard: { width: "100%", maxWidth: 340, borderRadius: 24, padding: 24, borderWidth: 1, borderColor: "rgba(255, 255, 255, 0.5)" },
+  modalCard: { width: "100%", maxWidth: 340, padding: 24 },
   typePillRow: {
     flexDirection: "row",
     flexWrap: "wrap",

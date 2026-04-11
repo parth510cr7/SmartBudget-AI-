@@ -15,7 +15,8 @@ import { useFocusEffect } from "expo-router";
 import { User, LogOut, Trash2, MapPin, ChevronDown, ChevronRight } from "lucide-react-native";
 import { postDemoSeed, purgeAllData, healthCheck, getApiBase, seedTestGroup } from "../../src/api/client";
 import { useStore } from "../../src/store/useStore";
-import { getTheme, IOS_BLUE, IOS_RED, SPACING, RADIUS } from "../../src/theme";
+import { GlassSurface } from "../../src/components/GlassSurface";
+import { getTheme, IOS_BLUE, IOS_RED, SPACING, RADIUS, LIQUID } from "../../src/theme";
 import { clearLocalData } from "../../src/lib/localDb";
 import {
   loadLocationConsent,
@@ -64,7 +65,7 @@ export default function ProfileScreen() {
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
   const locationConsent = useStore((s) => s.locationConsent);
   const setLocationConsent = useStore((s) => s.setLocationConsent);
-  const { bg, glass, textPrimary, textSecondary } = getTheme(isDarkMode);
+  const { bg, textPrimary, textSecondary } = getTheme(isDarkMode);
   const isLoggedIn = !!user && !(user as { isGuest?: boolean }).isGuest;
   const displayName = (user as { displayName?: string | null } | null)?.displayName ?? null;
   const userName = (user as { name?: string | null } | null)?.name ?? null;
@@ -260,7 +261,7 @@ export default function ProfileScreen() {
 
       {/* Section 1 — Account */}
       {isLoggedIn ? (
-        <View style={[styles.userCard, { backgroundColor: glass }]}>
+        <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.userCard]}>
           <View style={[styles.avatarWrap, { backgroundColor: bg }]}>
             {avatarUrl && isImageUri(avatarUrl) ? (
               <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
@@ -276,7 +277,7 @@ export default function ProfileScreen() {
             <LogOut size={18} color={IOS_RED} />
             <Text style={styles.logOutBtnText}>Log Out</Text>
           </TouchableOpacity>
-        </View>
+        </GlassSurface>
       ) : (
         <>
           <Text style={[styles.welcomeSubtitle, { color: textSecondary }]}>
@@ -290,12 +291,12 @@ export default function ProfileScreen() {
             >
               <Text style={styles.appleBtnText}>Sign in with Apple</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.googleBtn, { backgroundColor: glass }]}
-              onPress={() => router.push("/modal/login")}
-              activeOpacity={0.85}
-            >
-              <Text style={[styles.googleBtnText, { color: textPrimary }]}>Sign in with Google</Text>
+            <TouchableOpacity onPress={() => router.push("/modal/login")} activeOpacity={0.85}>
+              <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.button} style={LIQUID.shadow}>
+                <View style={styles.googleBtnInner}>
+                  <Text style={[styles.googleBtnText, { color: textPrimary }]}>Sign in with Google</Text>
+                </View>
+              </GlassSurface>
             </TouchableOpacity>
           </View>
         </>
@@ -303,7 +304,7 @@ export default function ProfileScreen() {
 
       {/* Privacy & Location */}
       <Text style={[styles.sectionLabel, { color: textSecondary }]}>Privacy & Location</Text>
-      <View style={[styles.privacyCard, { backgroundColor: glass }]}>
+      <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.privacyCard]}>
         <View style={styles.privacyRow}>
           <MapPin size={20} color={IOS_BLUE} />
           <Text style={[styles.privacyTitle, { color: textPrimary }]}>Location access</Text>
@@ -328,19 +329,17 @@ export default function ProfileScreen() {
         >
           <Text style={[styles.privacyDisableText, { color: textSecondary }]}>Disable location for pricing</Text>
         </TouchableOpacity>
-      </View>
+      </GlassSurface>
 
       {/* Section 4 — Data */}
       <Text style={[styles.sectionLabel, { color: textSecondary }]}>Data</Text>
-      <TouchableOpacity
-        style={[styles.privacyCard, { backgroundColor: glass }]}
-        onPress={() => router.push("/modal/price-history-sharing")}
-        activeOpacity={0.85}
-      >
-        <Text style={[styles.privacyTitle, { color: textPrimary }]}>Share my price history</Text>
-        <Text style={[styles.privacyHint, { color: textSecondary }]}>
-          Share receipt-based prices with another user (by their user ID). They see your prices when finalizing a basket.
-        </Text>
+      <TouchableOpacity onPress={() => router.push("/modal/price-history-sharing")} activeOpacity={0.85}>
+        <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.privacyCard]}>
+          <Text style={[styles.privacyTitle, { color: textPrimary }]}>Share my price history</Text>
+          <Text style={[styles.privacyHint, { color: textSecondary }]}>
+            Share receipt-based prices with another user (by their user ID). They see your prices when finalizing a basket.
+          </Text>
+        </GlassSurface>
       </TouchableOpacity>
       <TouchableOpacity
         style={[styles.dataResetBtn, { borderColor: "rgba(255, 59, 48, 0.4)" }]}
@@ -353,7 +352,7 @@ export default function ProfileScreen() {
 
       {/* On-device AI — Phi 3.5 mini */}
       <Text style={[styles.sectionLabel, { color: textSecondary }]}>On-device AI</Text>
-      <View style={[styles.privacyCard, { backgroundColor: glass }]}>
+      <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.privacyCard]}>
         <Text style={[styles.privacyTitle, { color: textPrimary }]}>Phi 3.5 mini</Text>
         <Text style={[styles.privacyHint, { color: textSecondary }]}>
           Parse receipts on-device with no cloud. Download once (~1.4 GB), then load. Requires a development build.
@@ -433,7 +432,7 @@ export default function ProfileScreen() {
             {downloadError ? <Text style={[styles.hint, { color: IOS_RED }]}>{downloadError}</Text> : null}
           </>
         )}
-      </View>
+      </GlassSurface>
 
       {/* Section 5 — Developer / Testing (only in __DEV__) */}
       {__DEV__ && (
@@ -504,12 +503,9 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 28, fontWeight: "800", marginBottom: 24, letterSpacing: -0.5 },
   welcomeSubtitle: { fontSize: 16, marginBottom: 20 },
   userCard: {
-    borderRadius: RADIUS.card,
     padding: 24,
     alignItems: "center",
     marginBottom: SPACING.sectionGap,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.3)",
   },
   avatarWrap: {
     width: 96,
@@ -538,12 +534,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   appleBtnText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
-  googleBtn: {
+  googleBtnInner: {
     paddingVertical: 16,
-    borderRadius: RADIUS.button,
+    paddingHorizontal: 16,
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.1)",
   },
   googleBtnText: { fontSize: 16, fontWeight: "600" },
   sectionLabel: {
@@ -554,11 +548,8 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   privacyCard: {
-    borderRadius: RADIUS.card,
     padding: SPACING.cardPadding,
     marginBottom: SPACING.sectionGap,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.2)",
   },
   privacyRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 6 },
   privacyTitle: { fontSize: 16, fontWeight: "600" },

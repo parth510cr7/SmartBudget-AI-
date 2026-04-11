@@ -207,6 +207,28 @@ router.get("/search-stats", async (req: AuthRequest, res: Response) => {
     const sortedCats = Object.entries(categorySums).sort((a, b) => b[1] - a[1]);
     const topCategory =
       sortedCats.length > 0 ? { name: sortedCats[0][0], amount: sortedCats[0][1] } : null;
+    const topCategories = sortedCats.slice(0, 5).map(([name, amount]) => ({ name, amount }));
+
+    // Spend per store (receipt totals)
+    const byStoreSpend = new Map<string, { name: string; totalSpend: number }>();
+    for (const r of receipts) {
+      const key = r.storeId;
+      const name = r.store?.name ?? "Unknown";
+      const t = Number(r.total);
+      if (!Number.isFinite(t)) continue;
+      const cur = byStoreSpend.get(key) ?? { name, totalSpend: 0 };
+      cur.totalSpend += t;
+      byStoreSpend.set(key, cur);
+    }
+    const topStoresBySpend = [...byStoreSpend.values()]
+      .sort((a, b) => b.totalSpend - a.totalSpend)
+      .slice(0, 5)
+      .map((x) => ({ name: x.name, totalSpend: x.totalSpend }));
+
+    const topStoresByVisits = [...byStoreKey.values()]
+      .sort((a, b) => b.visits - a.visits)
+      .slice(0, 5)
+      .map((x) => ({ name: x.name, visits: x.visits }));
 
     // Last 30 calendar days (UTC): sum VERIFIED receipt totals, avg per day = total / 30
     const now = new Date();
@@ -242,6 +264,9 @@ router.get("/search-stats", async (req: AuthRequest, res: Response) => {
     res.json({
       mostVisitedStore,
       topCategory,
+      topCategories,
+      topStoresBySpend,
+      topStoresByVisits,
       last30Days,
       community,
     });

@@ -41,6 +41,20 @@ export const TOUCH = {
   fabSize: 56,
 } as const;
 
+/** Liquid Glass–style strokes (used by translucent `GlassSurface` panels) */
+export const LIQUID = {
+  edgeLight: "rgba(255, 255, 255, 0.72)",
+  edgeDark: "rgba(255, 255, 255, 0.16)",
+  rimLight: "rgba(255, 255, 255, 0.38)",
+  shadow: {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 24,
+    elevation: 8,
+  },
+} as const;
+
 export const SHADOW = {
   card: {
     shadowColor: "#000",

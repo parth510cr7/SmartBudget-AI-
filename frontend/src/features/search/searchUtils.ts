@@ -10,8 +10,6 @@ export type ChatMessage = {
   meta?: { kind?: "basket_cta" | "info" | "error" };
 };
 
-export type ChatEngine = "data" | "general";
-
 export function fmtMoney(n: number): string {
   if (!Number.isFinite(n)) return "—";
   return `$${n.toFixed(2)}`;

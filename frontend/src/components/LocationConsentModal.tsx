@@ -14,7 +14,8 @@ import {
   ScrollView,
 } from "react-native";
 import { MapPin } from "lucide-react-native";
-import { getTheme, IOS_BLUE } from "../theme";
+import { GlassSurface } from "./GlassSurface";
+import { getTheme, IOS_BLUE, LIQUID } from "../theme";
 
 export type LocationConsentChoice = "precise" | "approximate" | "not_now";
 
@@ -40,7 +41,7 @@ export function LocationConsentModal({
   onChoose,
   isDarkMode = false,
 }: LocationConsentModalProps) {
-  const { bg, glass, textPrimary, textSecondary } = getTheme(isDarkMode);
+  const { bg, textPrimary, textSecondary } = getTheme(isDarkMode);
 
   return (
     <Modal
@@ -54,7 +55,8 @@ export function LocationConsentModal({
         activeOpacity={1}
         onPress={() => onChoose("not_now")}
       >
-        <View style={[styles.card, { backgroundColor: glass }]} onStartShouldSetResponder={() => true}>
+        <View onStartShouldSetResponder={() => true}>
+          <GlassSurface isDark={isDarkMode} borderRadius={20} style={[LIQUID.shadow, styles.card]}>
           <ScrollView
             style={styles.scroll}
             contentContainerStyle={styles.scrollContent}
@@ -91,6 +93,7 @@ export function LocationConsentModal({
               <Text style={[styles.btnGhostText, { color: textSecondary }]}>{COPY.btnNotNow}</Text>
             </TouchableOpacity>
           </ScrollView>
+          </GlassSurface>
         </View>
       </TouchableOpacity>
     </Modal>

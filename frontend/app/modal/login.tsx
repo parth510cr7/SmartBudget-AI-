@@ -15,7 +15,8 @@ import * as AppleAuthentication from "expo-apple-authentication";
 import * as Crypto from "expo-crypto";
 import { useIdTokenAuthRequest } from "expo-auth-session/providers/google";
 import { useStore } from "../../src/store/useStore";
-import { getTheme } from "../../src/theme";
+import { GlassSurface } from "../../src/components/GlassSurface";
+import { getTheme, LIQUID } from "../../src/theme";
 import { authSync, type AuthSyncUser } from "../../src/api/client";
 import type { UserState } from "../../src/store/useStore";
 import { isFirebaseClientConfigured } from "../../src/auth/firebaseClient";
@@ -59,7 +60,7 @@ export default function LoginModal() {
   const router = useRouter();
   const setUser = useStore((s) => s.setUser);
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
-  const { bg, glass, textPrimary, textSecondary } = getTheme(isDarkMode);
+  const { bg, textPrimary, textSecondary } = getTheme(isDarkMode);
   const [loading, setLoading] = useState(false);
 
   const clientIds = getGoogleClientIds();
@@ -170,12 +171,12 @@ export default function LoginModal() {
 
   return (
     <View style={[styles.container, { backgroundColor: bg }]}>
-      <TouchableOpacity
-        style={[styles.closeBtn, { backgroundColor: glass }]}
-        onPress={() => router.back()}
-        disabled={loading}
-      >
-        <X size={24} color={textPrimary} />
+      <TouchableOpacity onPress={() => router.back()} disabled={loading} style={styles.closeBtnWrap} activeOpacity={0.85}>
+        <GlassSurface isDark={isDarkMode} borderRadius={22} style={[LIQUID.shadow, styles.closeBtn]}>
+          <View style={styles.closeBtnInner}>
+            <X size={24} color={textPrimary} />
+          </View>
+        </GlassSurface>
       </TouchableOpacity>
       <Text style={[styles.title, { color: textPrimary }]}>Welcome back</Text>
       <Text style={[styles.subtitle, { color: textSecondary }]}>
@@ -199,13 +200,12 @@ export default function LoginModal() {
               <Text style={styles.appleBtnText}>Sign in with Apple</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity
-            style={[styles.googleBtn, { backgroundColor: glass, borderColor: textSecondary }]}
-            onPress={handleGoogleSignIn}
-            activeOpacity={0.8}
-            disabled={loading}
-          >
-            <Text style={[styles.googleBtnText, { color: textPrimary }]}>Sign in with Google</Text>
+          <TouchableOpacity onPress={handleGoogleSignIn} activeOpacity={0.85} disabled={loading}>
+            <GlassSurface isDark={isDarkMode} borderRadius={14} style={LIQUID.shadow}>
+              <View style={styles.googleBtnInner}>
+                <Text style={[styles.googleBtnText, { color: textPrimary }]}>Sign in with Google</Text>
+              </View>
+            </GlassSurface>
           </TouchableOpacity>
         </>
       )}
@@ -223,17 +223,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 56,
   },
-  closeBtn: {
+  closeBtnWrap: {
     position: "absolute",
     top: 48,
     right: 20,
+  },
+  closeBtn: {
     width: 44,
     height: 44,
-    borderRadius: 22,
+  },
+  closeBtnInner: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.5)",
   },
   title: { fontSize: 28, fontWeight: "800", marginTop: 24 },
   subtitle: { fontSize: 16, marginTop: 8, marginBottom: 40 },
@@ -251,11 +253,10 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   appleBtnText: { color: "#FFFFFF", fontSize: 17, fontWeight: "600" },
-  googleBtn: {
+  googleBtnInner: {
     paddingVertical: 18,
-    borderRadius: 14,
+    paddingHorizontal: 16,
     alignItems: "center",
-    borderWidth: 1.5,
   },
   googleBtnText: { fontSize: 17, fontWeight: "600" },
   footer: {

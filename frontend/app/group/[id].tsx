@@ -32,7 +32,8 @@ import {
   type GroupDashboardResponse,
 } from "../../src/api/client";
 import { useStore } from "../../src/store/useStore";
-import { getTheme, IOS_BLUE } from "../../src/theme";
+import { GlassSurface } from "../../src/components/GlassSurface";
+import { getTheme, IOS_BLUE, LIQUID, RADIUS } from "../../src/theme";
 
 // TEMPORARILY DISABLED: socket.io was causing infinite buffer / crash
 // import { io, Socket } from "socket.io-client";
@@ -45,7 +46,7 @@ export default function GroupPage() {
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
   const expensePrefill = useStore((s) => s.expensePrefill);
   const setExpensePrefill = useStore((s) => s.setExpensePrefill);
-  const { bg, glass, textPrimary, textSecondary } = getTheme(isDarkMode);
+  const { bg, textPrimary, textSecondary } = getTheme(isDarkMode);
   // const socketRef = useRef<Socket | null>(null);
 
   const [dashboard, setDashboard] = useState<GroupDashboardResponse | null>(null);
@@ -443,7 +444,7 @@ export default function GroupPage() {
               </Text>
             }
             renderItem={({ item }) => (
-              <View style={[styles.priceRow, { backgroundColor: glass }]}>
+              <GlassSurface isDark={isDarkMode} borderRadius={12} style={[LIQUID.shadow, styles.priceRow]}>
                 <View style={styles.priceRowLeft}>
                   <View style={[styles.priceRowIcon, { backgroundColor: bg }]}>
                     <Text style={[styles.priceRowIconText, { color: textPrimary }]}>
@@ -471,7 +472,7 @@ export default function GroupPage() {
                     </Text>
                   )}
                 </View>
-              </View>
+              </GlassSurface>
             )}
           />
         </View>
@@ -519,7 +520,7 @@ export default function GroupPage() {
         {tab === "expenses" && (
           <>
             {/* 1. Group summary card */}
-            <View style={[styles.summaryCard, { backgroundColor: glass }]}>
+            <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.summaryCard]}>
               <Text style={[styles.summaryCardTitle, { color: textPrimary }]}>Group summary</Text>
               <View style={styles.summaryGrid}>
                 <View style={styles.summaryItem}>
@@ -600,7 +601,7 @@ export default function GroupPage() {
                   </>
                 )}
               </View>
-            </View>
+            </GlassSurface>
 
             {inviteFeedback ? (
               <View style={[styles.inviteFeedbackBar, { backgroundColor: isDarkMode ? "rgba(52,199,89,0.2)" : "rgba(52,199,89,0.15)" }]}>
@@ -609,7 +610,7 @@ export default function GroupPage() {
             ) : null}
 
             {/* 2. Members card – +/- add/remove */}
-            <View style={[styles.membersCard, { backgroundColor: glass }]}>
+            <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.membersCard]}>
               <View style={styles.membersCardHeader}>
                 <Text style={[styles.membersCardTitle, { color: textPrimary }]}>Members</Text>
                 <View style={styles.membersCardActions}>
@@ -722,7 +723,7 @@ export default function GroupPage() {
                   );
                 })
               )}
-            </View>
+            </GlassSurface>
 
             {/* 3. Expenses list */}
             <Text style={[styles.sectionTitle, { color: textPrimary }]}>Expenses</Text>
@@ -735,7 +736,6 @@ export default function GroupPage() {
                 return (
                   <TouchableOpacity
                     key={e.id}
-                    style={[styles.expenseRowCompact, { backgroundColor: glass }]}
                     onPress={() => setSelectedExpense({
                       id: e.id,
                       description: e.description ?? "",
@@ -747,19 +747,23 @@ export default function GroupPage() {
                       receiptUrl: e.receiptUrl ?? null,
                       receipt: e.receipt ?? null,
                     })}
-                    activeOpacity={0.8}
+                    activeOpacity={0.85}
                   >
-                    <View style={styles.expenseLeft}>
-                      <View style={styles.expenseRowTitleRow}>
-                        {fromReceipt && <Receipt size={16} color={textSecondary} style={styles.expenseReceiptIcon} />}
-                        <Text style={[styles.expenseDesc, { color: textPrimary }]} numberOfLines={1}>{e.description}</Text>
+                    <GlassSurface isDark={isDarkMode} borderRadius={16} style={[LIQUID.shadow, styles.expenseRowCompact]}>
+                      <View style={styles.expenseRowCompactInner}>
+                        <View style={styles.expenseLeft}>
+                          <View style={styles.expenseRowTitleRow}>
+                            {fromReceipt && <Receipt size={16} color={textSecondary} style={styles.expenseReceiptIcon} />}
+                            <Text style={[styles.expenseDesc, { color: textPrimary }]} numberOfLines={1}>{e.description}</Text>
+                          </View>
+                          <Text style={[styles.expenseMeta, { color: textSecondary }]}>
+                            {receiptSubtitle ?? `${e.paidBy?.name || "Someone"} · ${e.createdAt ? new Date(e.createdAt).toLocaleDateString() : ""} · Split equally`}
+                          </Text>
+                        </View>
+                        <Text style={[styles.expenseAmountRight, { color: textPrimary }]}>${Number(e.amount ?? 0).toFixed(2)}</Text>
+                        <ChevronRight size={18} color={textSecondary} />
                       </View>
-                      <Text style={[styles.expenseMeta, { color: textSecondary }]}>
-                        {receiptSubtitle ?? `${e.paidBy?.name || "Someone"} · ${e.createdAt ? new Date(e.createdAt).toLocaleDateString() : ""} · Split equally`}
-                      </Text>
-                    </View>
-                    <Text style={[styles.expenseAmountRight, { color: textPrimary }]}>${Number(e.amount ?? 0).toFixed(2)}</Text>
-                    <ChevronRight size={18} color={textSecondary} />
+                    </GlassSurface>
                   </TouchableOpacity>
                 );
               })
@@ -770,7 +774,7 @@ export default function GroupPage() {
         {tab === "balances" && (
           <>
             {/* Settlement summary */}
-            <View style={[styles.summaryCard, { backgroundColor: glass }]}>
+            <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.summaryCard]}>
               <Text style={[styles.summaryCardTitle, { color: textPrimary }]}>Settlement</Text>
               {isFullySettled ? (
                 <Text style={[styles.settlementDone, { color: "#34C759" }]}>Everyone is settled up.</Text>
@@ -830,7 +834,7 @@ export default function GroupPage() {
                   </TouchableOpacity>
                 </>
               )}
-            </View>
+            </GlassSurface>
 
             {/* Who owes who – visual rows */}
             <Text style={[styles.sectionTitle, { color: textPrimary }]}>Who owes who</Text>
@@ -845,7 +849,7 @@ export default function GroupPage() {
                 const fromInitials = fromName.split(/\s+/).map((w) => w[0]).join("").toUpperCase().slice(0, 2);
                 const toInitials = toName.split(/\s+/).map((w) => w[0]).join("").toUpperCase().slice(0, 2);
                 return (
-                  <View key={`balance-${i}`} style={[styles.balanceRowVisual, { backgroundColor: glass }]}>
+                  <GlassSurface key={`balance-${i}`} isDark={isDarkMode} borderRadius={16} style={[LIQUID.shadow, styles.balanceRowVisual]}>
                     <View style={[styles.balanceAvatar, { backgroundColor: bg }]}>
                       <Text style={[styles.balanceAvatarText, { color: textPrimary }]}>{fromInitials}</Text>
                     </View>
@@ -880,7 +884,7 @@ export default function GroupPage() {
                         {settlingRow === i ? <ActivityIndicator color="#FFF" size="small" /> : <Text style={styles.settleBtnText}>Settle</Text>}
                       </TouchableOpacity>
                     )}
-                  </View>
+                  </GlassSurface>
                 );
               })
             )}
@@ -1109,7 +1113,7 @@ export default function GroupPage() {
             activeOpacity={1}
             onPress={() => { if (!expenseSubmitting) { setExpenseNeedsReview(false); setAddExpenseVisible(false); } }}
           />
-          <View style={[styles.addExpenseSheet, { backgroundColor: glass }]}>
+          <GlassSurface isDark={isDarkMode} borderRadius={24} style={[LIQUID.shadow, styles.addExpenseSheet]}>
             <View style={styles.memberActionHandle} />
             <View style={styles.addExpenseHeader}>
               <Text style={[styles.addExpenseTitle, { color: textPrimary }]}>Add expense</Text>
@@ -1211,7 +1215,7 @@ export default function GroupPage() {
                 <Text style={[styles.modalCancelText, { color: textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </GlassSurface>
         </View>
       </Modal>
 
@@ -1493,7 +1497,8 @@ export default function GroupPage() {
           activeOpacity={1}
           onPress={() => !addPersonSubmitting && setAddPersonManualVisible(false)}
         >
-          <View style={[styles.modalCard, { backgroundColor: glass }]} onStartShouldSetResponder={() => true}>
+          <View onStartShouldSetResponder={() => true}>
+            <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.modalCard]}>
             <Text style={[styles.modalTitle, { color: textPrimary }]}>Add Person</Text>
             <Text style={[styles.modalLabel, { color: textSecondary }]}>Name</Text>
             <TextInput
@@ -1539,6 +1544,7 @@ export default function GroupPage() {
             <TouchableOpacity onPress={() => setAddPersonManualVisible(false)} style={styles.modalCancel}>
               <Text style={[styles.modalCancelText, { color: textSecondary }]}>Cancel</Text>
             </TouchableOpacity>
+            </GlassSurface>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -1627,51 +1633,53 @@ export default function GroupPage() {
       <Modal visible={trashSheetVisible} transparent animationType="slide">
         <View style={styles.bottomSheetOverlay}>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setTrashSheetVisible(false)} />
-          <View style={[styles.bottomSheetCard, { backgroundColor: glass }]} onStartShouldSetResponder={() => true}>
-            <TouchableOpacity
-              style={styles.bottomSheetRow}
-              onPress={() => {
-                setTrashSheetVisible(false);
-                Alert.alert(
-                  "Leave Group",
-                  "Are you sure you want to leave this group? You will need to be re-invited to rejoin.",
-                  [
-                    { text: "Cancel", style: "cancel" },
-                    {
-                      text: "Leave",
-                      style: "destructive",
-                      onPress: async () => {
-                        if (!id) return;
-                        try {
-                          const safeToken = authToken || "dev-token";
-                          await leaveGroup(safeToken, id);
-                          router.replace("/(tabs)/shared");
-                        } catch (e) {
-                          Alert.alert("Error", e instanceof Error ? e.message : String(e));
-                        }
-                      },
-                    },
-                  ]
-                );
-              }}
-            >
-              <Text style={[styles.bottomSheetRowText, { color: textPrimary }]}>Leave Group</Text>
-            </TouchableOpacity>
-            {isAdmin && (
+          <View onStartShouldSetResponder={() => true}>
+            <GlassSurface isDark={isDarkMode} borderRadius={20} style={[LIQUID.shadow, styles.bottomSheetCard]}>
               <TouchableOpacity
-                style={[styles.bottomSheetRow, styles.bottomSheetRowDestructive]}
+                style={styles.bottomSheetRow}
                 onPress={() => {
                   setTrashSheetVisible(false);
-                  handleDeleteGroup();
+                  Alert.alert(
+                    "Leave Group",
+                    "Are you sure you want to leave this group? You will need to be re-invited to rejoin.",
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Leave",
+                        style: "destructive",
+                        onPress: async () => {
+                          if (!id) return;
+                          try {
+                            const safeToken = authToken || "dev-token";
+                            await leaveGroup(safeToken, id);
+                            router.replace("/(tabs)/shared");
+                          } catch (e) {
+                            Alert.alert("Error", e instanceof Error ? e.message : String(e));
+                          }
+                        },
+                      },
+                    ]
+                  );
                 }}
-                disabled={deleteSubmitting}
               >
-                <Text style={styles.bottomSheetRowDestructiveText}>Delete Group</Text>
+                <Text style={[styles.bottomSheetRowText, { color: textPrimary }]}>Leave Group</Text>
               </TouchableOpacity>
-            )}
-            <TouchableOpacity style={styles.bottomSheetRow} onPress={() => setTrashSheetVisible(false)}>
-              <Text style={[styles.bottomSheetRowText, { color: textSecondary }]}>Cancel</Text>
-            </TouchableOpacity>
+              {isAdmin && (
+                <TouchableOpacity
+                  style={[styles.bottomSheetRow, styles.bottomSheetRowDestructive]}
+                  onPress={() => {
+                    setTrashSheetVisible(false);
+                    handleDeleteGroup();
+                  }}
+                  disabled={deleteSubmitting}
+                >
+                  <Text style={styles.bottomSheetRowDestructiveText}>Delete Group</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={styles.bottomSheetRow} onPress={() => setTrashSheetVisible(false)}>
+                <Text style={[styles.bottomSheetRowText, { color: textSecondary }]}>Cancel</Text>
+              </TouchableOpacity>
+            </GlassSurface>
           </View>
         </View>
       </Modal>
@@ -1681,7 +1689,8 @@ export default function GroupPage() {
         <View style={styles.bottomSheetOverlay}>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setSelectedExpense(null)} />
           {selectedExpense && (
-            <View style={[styles.expenseDetailCard, { backgroundColor: glass }]} onStartShouldSetResponder={() => true}>
+            <View onStartShouldSetResponder={() => true}>
+              <GlassSurface isDark={isDarkMode} borderRadius={20} style={[LIQUID.shadow, styles.expenseDetailCard]}>
               <View style={styles.expenseDetailHeader}>
                 <Text style={[styles.expenseDetailTitle, { color: textPrimary }]}>{selectedExpense.description || "Expense"}</Text>
                 <TouchableOpacity onPress={() => setSelectedExpense(null)} hitSlop={12}>
@@ -1869,6 +1878,7 @@ export default function GroupPage() {
                 <Text style={styles.expenseDetailCloseText}>Done</Text>
               </TouchableOpacity>
               </ScrollView>
+              </GlassSurface>
             </View>
           )}
         </View>
@@ -1882,7 +1892,7 @@ export default function GroupPage() {
             activeOpacity={1}
             onPress={() => !expenseSubmitting && setEditExpenseVisible(false)}
           />
-          <View style={[styles.modalCard, styles.editModalCard, { backgroundColor: glass }]}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.modalCard, styles.editModalCard]}>
             <ScrollView style={styles.editModalScroll} contentContainerStyle={styles.editModalScrollContent} showsVerticalScrollIndicator={false}>
             <Text style={[styles.modalTitle, { color: textPrimary }]}>Edit expense</Text>
             <Text style={[styles.modalLabel, { color: textSecondary }]}>Description</Text>
@@ -1974,7 +1984,7 @@ export default function GroupPage() {
               <Text style={[styles.modalCancelText, { color: textSecondary }]}>Cancel</Text>
             </TouchableOpacity>
             </ScrollView>
-          </View>
+          </GlassSurface>
         </View>
       </Modal>
     </SafeAreaView>
@@ -2186,11 +2196,12 @@ const styles = StyleSheet.create({
   inviteSheetCopyRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 16, marginTop: 8, borderTopWidth: StyleSheet.hairlineWidth },
   inviteSheetCopyText: { fontSize: 17, fontWeight: "500" },
   expenseRowCompact: {
+    marginBottom: 8,
+  },
+  expenseRowCompactInner: {
     flexDirection: "row",
     alignItems: "center",
     padding: 14,
-    borderRadius: 12,
-    marginBottom: 8,
   },
   expenseAmountRight: { fontSize: 16, fontWeight: "700", marginLeft: 8 },
   balanceRowVisual: {

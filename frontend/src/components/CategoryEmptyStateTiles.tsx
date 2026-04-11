@@ -13,7 +13,8 @@ import {
   Wallet,
 } from "lucide-react-native";
 import type { SpendingGlassTileDatum } from "./SpendingGlassTileBoard";
-import { RADIUS, SPACING } from "../theme";
+import { GlassSurface } from "./GlassSurface";
+import { LIQUID, RADIUS, SPACING } from "../theme";
 
 function categoryToIcon(datum: SpendingGlassTileDatum) {
   const key = datum.category.toLowerCase();
@@ -41,7 +42,6 @@ export type CategoryEmptyStateTilesProps = {
   isDarkMode?: boolean;
   textPrimary?: string;
   textSecondary?: string;
-  glass?: string;
   bg?: string;
 };
 
@@ -55,7 +55,6 @@ export function CategoryEmptyStateTiles({
   isDarkMode = false,
   textPrimary = "#111827",
   textSecondary = "#6B7280",
-  glass = "rgba(255,255,255,0.85)",
   bg = "#F2F2F7",
 }: CategoryEmptyStateTilesProps) {
   const tiles = useMemo(() => {
@@ -79,19 +78,19 @@ export function CategoryEmptyStateTiles({
     <View style={styles.wrapper}>
       {/* One large primary tile */}
       {primary && (
-        <TouchableOpacity
-          style={[styles.primaryTile, { backgroundColor: glass }]}
-          onPress={() => onTilePress?.(primary.datum)}
-          activeOpacity={0.85}
-        >
-          <View style={[styles.primaryIconWrap, { backgroundColor: bg }]}>
-            <PrimaryIcon size={ICON_SIZE_PRIMARY} color={isDarkMode ? "#8E8E93" : "#3A3A3C"} strokeWidth={2} />
-          </View>
-          <Text style={[styles.primaryCategory, { color: textPrimary }]} numberOfLines={1}>
-            {primary.datum.category}
-          </Text>
-          <Text style={[styles.primaryAmount, { color: textPrimary }]}>{formatAmount(primary.datum.amount)}</Text>
-          <Text style={[styles.primaryPercent, { color: textSecondary }]}>{primary.percent}% of spend</Text>
+        <TouchableOpacity onPress={() => onTilePress?.(primary.datum)} activeOpacity={0.85}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.primaryTileOuter]}>
+            <View style={styles.primaryTileInner}>
+              <View style={[styles.primaryIconWrap, { backgroundColor: bg }]}>
+                <PrimaryIcon size={ICON_SIZE_PRIMARY} color={isDarkMode ? "#8E8E93" : "#3A3A3C"} strokeWidth={2} />
+              </View>
+              <Text style={[styles.primaryCategory, { color: textPrimary }]} numberOfLines={1}>
+                {primary.datum.category}
+              </Text>
+              <Text style={[styles.primaryAmount, { color: textPrimary }]}>{formatAmount(primary.datum.amount)}</Text>
+              <Text style={[styles.primaryPercent, { color: textSecondary }]}>{primary.percent}% of spend</Text>
+            </View>
+          </GlassSurface>
         </TouchableOpacity>
       )}
 
@@ -100,20 +99,19 @@ export function CategoryEmptyStateTiles({
         {rest.map(({ datum, percent }) => {
           const Icon = categoryToIcon(datum);
           return (
-            <TouchableOpacity
-              key={`${datum.category}-${datum.amount}`}
-              style={[styles.secondaryTile, { backgroundColor: glass }]}
-              onPress={() => onTilePress?.(datum)}
-              activeOpacity={0.85}
-            >
-              <View style={[styles.secondaryIconWrap, { backgroundColor: bg }]}>
-                <Icon size={ICON_SIZE_SECONDARY} color={isDarkMode ? "#8E8E93" : "#3A3A3C"} strokeWidth={2} />
-              </View>
-              <Text style={[styles.secondaryCategory, { color: textPrimary }]} numberOfLines={1}>
-                {datum.category}
-              </Text>
-              <Text style={[styles.secondaryAmount, { color: textPrimary }]}>{formatAmount(datum.amount)}</Text>
-              <Text style={[styles.secondaryPercent, { color: textSecondary }]}>{percent}%</Text>
+            <TouchableOpacity key={`${datum.category}-${datum.amount}`} onPress={() => onTilePress?.(datum)} activeOpacity={0.85}>
+              <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.button} style={[LIQUID.shadow, styles.secondaryTileOuter]}>
+                <View style={styles.secondaryTileInner}>
+                  <View style={[styles.secondaryIconWrap, { backgroundColor: bg }]}>
+                    <Icon size={ICON_SIZE_SECONDARY} color={isDarkMode ? "#8E8E93" : "#3A3A3C"} strokeWidth={2} />
+                  </View>
+                  <Text style={[styles.secondaryCategory, { color: textPrimary }]} numberOfLines={1}>
+                    {datum.category}
+                  </Text>
+                  <Text style={[styles.secondaryAmount, { color: textPrimary }]}>{formatAmount(datum.amount)}</Text>
+                  <Text style={[styles.secondaryPercent, { color: textSecondary }]}>{percent}%</Text>
+                </View>
+              </GlassSurface>
             </TouchableOpacity>
           );
         })}
@@ -127,12 +125,9 @@ const styles = StyleSheet.create({
     marginTop: SPACING.cardGap,
     gap: SPACING.cardGap,
   },
-  primaryTile: {
-    borderRadius: RADIUS.card,
+  primaryTileOuter: { minHeight: 100 },
+  primaryTileInner: {
     padding: SPACING.cardPadding,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.4)",
-    minHeight: 100,
   },
   primaryIconWrap: {
     width: 52,
@@ -161,15 +156,14 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 10,
   },
-  secondaryTile: {
+  secondaryTileOuter: {
     flex: 1,
     minWidth: "47%",
     maxWidth: "47%",
-    borderRadius: RADIUS.button,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.35)",
     minHeight: 88,
+  },
+  secondaryTileInner: {
+    padding: 12,
   },
   secondaryIconWrap: {
     width: 38,

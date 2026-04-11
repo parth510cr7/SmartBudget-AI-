@@ -14,6 +14,7 @@ dist/
 .agents/
 agent-transcripts/
 frontend/dist-export-test/
+frontend/.expo-export-*/
 firebase-public/
 tools/metagpt/.venv*/
 tools/metagpt/.venv*/

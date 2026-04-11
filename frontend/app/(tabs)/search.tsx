@@ -18,17 +18,11 @@ import { useFocusEffect } from "expo-router";
 import { Send, Sparkles, ShoppingBasket, Trash2, Plus, X, Store, Tag, CalendarDays, Users } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "../../src/store/useStore";
-import { getTheme, IOS_BLUE, IOS_RED, SPACING, RADIUS, SHADOW, TYPE } from "../../src/theme";
-import {
-  appQuery,
-  askSmartBudget,
-  getBasketInsights,
-  getSearchStats,
-  type SearchStatsResponse,
-} from "../../src/api/client";
+import { GlassSurface } from "../../src/components/GlassSurface";
+import { getTheme, IOS_BLUE, IOS_RED, LIQUID, SPACING, RADIUS, TYPE } from "../../src/theme";
+import { askSmartBudget, getBasketInsights, getSearchStats, type SearchStatsResponse } from "../../src/api/client";
 import {
   type ChatMessage,
-  type ChatEngine,
   buildBasketFinalizeMessage,
   cleanAnswer,
   friendlyChatError,
@@ -38,12 +32,24 @@ import {
   newMessageId,
   splitBasketItemsFromFreeText,
 } from "../../src/features/search/searchUtils";
-import { loadSearchChatState, saveSearchChatState } from "../../src/features/search/searchStorage";
+import { loadSearchChatState, saveSearchChatState, type SearchScreenMode } from "../../src/features/search/searchStorage";
+import { storeInitials } from "../../src/features/search/searchUiHelpers";
+
+const SECTION_GAP = 24;
+const CARD_PADDING = 18;
+const BUBBLE_GAP = 12;
+
+function emptyStats(): Pick<
+  SearchStatsResponse,
+  "topCategories" | "topStoresBySpend" | "topStoresByVisits"
+> {
+  return { topCategories: [], topStoresBySpend: [], topStoresByVisits: [] };
+}
 
 export default function SearchScreen() {
   const authToken = useStore((s) => (s.user as { idToken?: string } | null)?.idToken ?? null);
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
-  const { bg, glass, textPrimary, textSecondary } = getTheme(isDarkMode);
+  const { bg, textPrimary, textSecondary } = getTheme(isDarkMode);
   const insets = useSafeAreaInsets();
 
   const basket = useStore((s) => s.basket ?? []);
@@ -51,6 +57,7 @@ export default function SearchScreen() {
   const refreshKey = useStore((s) => s.refreshKey ?? 0);
 
   const listRef = useRef<FlatList<ChatMessage> | null>(null);
+  const inputRef = useRef<TextInput | null>(null);
   const shouldAutoScrollRef = useRef(false);
   const messagesRef = useRef<ChatMessage[]>([]);
 
@@ -67,8 +74,22 @@ export default function SearchScreen() {
   const [manualLine, setManualLine] = useState("");
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [composerInputHeight, setComposerInputHeight] = useState(22);
-  const [chatEngine, setChatEngine] = useState<ChatEngine>("data");
   const [searchHydrated, setSearchHydrated] = useState(false);
+  const [searchMode, setSearchMode] = useState<SearchScreenMode>("insights");
+  const [expandedAssistantIds, setExpandedAssistantIds] = useState<Record<string, boolean>>({});
+
+  const statsSafe = useMemo(() => {
+    if (!searchStats) return { ...emptyStats(), last30Days: { totalSpend: 0, avgPerDay: 0 } };
+    return {
+      topCategories: searchStats.topCategories ?? [],
+      topStoresBySpend: searchStats.topStoresBySpend ?? [],
+      topStoresByVisits: searchStats.topStoresByVisits ?? [],
+      last30Days: searchStats.last30Days,
+      community: searchStats.community,
+      mostVisitedStore: searchStats.mostVisitedStore,
+      topCategory: searchStats.topCategory,
+    };
+  }, [searchStats]);
 
   const loadSearchStats = useCallback(() => {
     setSearchStatsError(null);
@@ -96,13 +117,12 @@ export default function SearchScreen() {
         setSearchHydrated(true);
         return;
       }
-      // If the user already has messages (e.g. sent before load finished), do not overwrite.
       if (messagesRef.current.length > 0) {
         setSearchHydrated(true);
         return;
       }
       setMessages(s.messages);
-      setChatEngine(s.chatEngine);
+      setSearchMode(s.searchMode ?? "insights");
       setSearchHydrated(true);
     });
     return () => {
@@ -112,14 +132,12 @@ export default function SearchScreen() {
 
   useEffect(() => {
     if (!searchHydrated) return;
-    void saveSearchChatState({ messages, chatEngine });
-  }, [messages, chatEngine, searchHydrated]);
+    void saveSearchChatState({ messages, searchMode });
+  }, [messages, searchMode, searchHydrated]);
 
   const appendMessage = useCallback((m: Omit<ChatMessage, "id" | "createdAt">) => {
     setMessages((prev) => [...prev, { ...m, id: newMessageId(m.role), createdAt: Date.now() }]);
   }, []);
-
-  // (Suggestions removed)
 
   const scrollToBottomSoon = useCallback(() => {
     requestAnimationFrame(() => {
@@ -136,7 +154,7 @@ export default function SearchScreen() {
     const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
     const showSub = Keyboard.addListener(showEvent, () => {
       setKeyboardOpen(true);
-      if (messages.length > 0) {
+      if (searchMode === "chat" && messages.length > 0) {
         shouldAutoScrollRef.current = true;
         scrollToBottomSoon();
       }
@@ -148,13 +166,14 @@ export default function SearchScreen() {
       showSub.remove();
       hideSub.remove();
     };
-  }, [messages.length, scrollToBottomSoon]);
+  }, [messages.length, scrollToBottomSoon, searchMode]);
 
   const finalizeBasket = useCallback(async () => {
     if (basket.length === 0) {
       Alert.alert("Basket is empty", "Add a few items first.");
       return;
     }
+    setSearchMode("chat");
     setInsightsLoading(true);
     try {
       const res = await getBasketInsights(authToken ?? null, { itemNames: basket });
@@ -180,12 +199,13 @@ export default function SearchScreen() {
       if (!trimmed) return;
       if (!searchHydrated) return;
 
+      setSearchMode("chat");
       shouldAutoScrollRef.current = true;
       appendMessage({ role: "user", text: trimmed });
       setComposer("");
+      setComposerInputHeight(22);
       scrollToBottomSoon();
 
-      // Auto-basket: if user pasted a list, build basket and offer finalize.
       if (looksLikeBasketList(trimmed)) {
         const items = splitBasketItemsFromFreeText(trimmed);
         if (items.length > 0) {
@@ -210,13 +230,8 @@ export default function SearchScreen() {
 
       setRunning(true);
       try {
-        if (chatEngine === "general") {
-          const r = await askSmartBudget(authToken ?? null, trimmed);
-          appendMessage({ role: "assistant", text: cleanAnswer(r.reply || "Done.") });
-        } else {
-          const r = await appQuery(authToken ?? null, trimmed);
-          appendMessage({ role: "assistant", text: cleanAnswer(r.answer || "Done.") });
-        }
+        const r = await askSmartBudget(authToken ?? null, trimmed);
+        appendMessage({ role: "assistant", text: cleanAnswer(r.reply || "Done.") });
       } catch (e) {
         appendMessage({
           role: "assistant",
@@ -228,23 +243,31 @@ export default function SearchScreen() {
         scrollToBottomSoon();
       }
     },
-    [appendMessage, authToken, chatEngine, searchHydrated, scrollToBottomSoon, setBasket]
+    [appendMessage, authToken, searchHydrated, scrollToBottomSoon, setBasket]
   );
 
   const quickPrompts = useMemo(
     () => [
-      { label: "This month summary", text: "Summarize my spending this month." },
+      { label: "This month", text: "Summarize my spending this month." },
       { label: "Top stores", text: "Which stores did I spend the most at?" },
-      { label: "Recent purchases", text: "What did I buy recently?" },
+      { label: "Recent buys", text: "What did I buy recently?" },
     ],
     []
   );
 
-  const isEmptySearch = messages.length === 0;
-  const flatListData = messages;
+  const onQuickAction = useCallback(
+    (text: string) => {
+      if (!searchHydrated) return;
+      setSearchMode("chat");
+      void send(text);
+    },
+    [searchHydrated, send]
+  );
 
-  const closeChat = useCallback(() => {
+  const clearChatAndInsights = useCallback(() => {
     setMessages([]);
+    setSearchMode("insights");
+    setExpandedAssistantIds({});
     requestAnimationFrame(() => {
       try {
         listRef.current?.scrollToOffset({ offset: 0, animated: true });
@@ -257,31 +280,26 @@ export default function SearchScreen() {
   const TAB_BAR_HEIGHT = 72;
   const tabBarBottom = Math.max(12, insets.bottom + 8);
   const tabBarReserve = TAB_BAR_HEIGHT + tabBarBottom;
-  /** Full height of composer column (padding + row + tab-bar reserve). Drives FlatList paddingBottom. */
   const [composerAreaHeight, setComposerAreaHeight] = useState(0);
-  /** Inner row only — used for minimum padding before first layout. */
   const [composerRowHeight, setComposerRowHeight] = useState(52);
 
   const hasChatMessages = messages.length > 0;
+  const isChatMode = searchMode === "chat";
 
-  /** iOS: offset = distance from screen top to top of KAV inner content; matches custom header below status bar. */
   const keyboardVerticalOffset = useMemo(() => {
     if (Platform.OS === "android") return 0;
     const headerPaddingTop = insets.top + 12;
     const headerRowApprox = 44;
+    const chromeApprox = searchMode === "insights" ? 56 : 0;
+    const segmentApprox = 48;
     const headerPaddingBottom = 8;
-    return headerPaddingTop + headerRowApprox + headerPaddingBottom;
-  }, [insets.top]);
+    return headerPaddingTop + headerRowApprox + chromeApprox + segmentApprox + headerPaddingBottom;
+  }, [insets.top, searchMode]);
 
-  /** Scrollable bottom inset so the last bubble clears the composer + tab bar (uses measured composer column). */
   const listContentPaddingBottom = useMemo(() => {
-    // When keyboard is open (even with no messages yet), reserve space so the chat surface
-    // doesn't appear \"under\" the composer.
     if (!hasChatMessages) {
-      return keyboardOpen ? composerRowHeight + tabBarReserve + 18 : 8;
+      return keyboardOpen ? composerRowHeight + tabBarReserve + 18 : 16;
     }
-    // If we have a measured composer column, use it. Otherwise fall back to the core pieces
-    // acceptance wants: composerRowHeight + tabBarReserve (+ a small safety gap).
     const measured = composerAreaHeight > 0 ? composerAreaHeight : 0;
     const fallback = composerRowHeight + tabBarReserve;
     return Math.max(measured, fallback) + 18;
@@ -301,130 +319,289 @@ export default function SearchScreen() {
     [setBasket]
   );
 
-  const promptRows = useMemo(
-    () =>
-      quickPrompts.map((p) => (
-        <TouchableOpacity
-          key={p.label}
-          style={[
-            styles.promptRow,
-            { backgroundColor: glass, borderColor: "rgba(255,255,255,0.14)", opacity: searchHydrated ? 1 : 0.5 },
-            SHADOW.card,
-          ]}
-          onPress={() => send(p.text)}
-          disabled={!searchHydrated}
-          accessibilityRole="button"
-          accessibilityLabel={`Send prompt: ${p.label}`}
-        >
-          <Sparkles size={16} color={IOS_BLUE} />
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.promptRowLabel, { color: textPrimary }]}>{p.label}</Text>
-            <Text style={[styles.promptRowHint, { color: textSecondary }]} numberOfLines={2}>
-              {p.text}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      )),
-    [glass, quickPrompts, searchHydrated, send, textPrimary, textSecondary]
+  const toggleAssistantExpand = useCallback((id: string) => {
+    setExpandedAssistantIds((prev) => ({ ...prev, [id]: !prev[id] }));
+  }, []);
+
+  const heroStore = statsSafe.topStoresBySpend[0];
+  const heroInitials = heroStore ? storeInitials(heroStore.name) : "SB";
+
+  const insightBar = (label: string, value: number, max: number, barColor: string) => {
+    const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
+    return (
+      <View style={styles.barRowWrap}>
+        <View style={styles.barRowHeader}>
+          <Text style={[styles.barRowLabel, { color: textPrimary }]} numberOfLines={1}>
+            {label}
+          </Text>
+          <Text style={[styles.barRowValue, { color: textPrimary }]}>{fmtMoney(value)}</Text>
+        </View>
+        <View style={[styles.barTrack, { backgroundColor: isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)" }]}>
+          <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: barColor }]} />
+        </View>
+      </View>
+    );
+  };
+
+  const statLine = (icon: ReactNode, label: string, value: string) => (
+    <View style={[styles.statRow, { borderColor: "rgba(255,255,255,0.1)" }]}>
+      <View style={styles.statRowIcon}>{icon}</View>
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.statLabel, { color: textSecondary }]}>{label}</Text>
+        <Text style={[styles.statValue, { color: textPrimary }]} numberOfLines={2}>
+          {value}
+        </Text>
+      </View>
+    </View>
   );
 
-  const listHeader = useMemo(() => {
-    const chatStarter = (
-      <View style={[styles.chatPromptsSection, styles.chatPromptsSectionBelowStats]}>
-        <Text style={[styles.chatSurfaceHelper, { color: textSecondary }]}>Chat</Text>
-        <Text style={[styles.chatPromptsSectionTitle, { color: textSecondary }]}>Try asking</Text>
-        {promptRows}
-      </View>
-    );
+  const maxCat = Math.max(0, ...statsSafe.topCategories.map((c) => c.amount));
+  const maxSpend = Math.max(0, ...statsSafe.topStoresBySpend.map((s) => s.totalSpend));
+  const maxVisits = Math.max(0, ...statsSafe.topStoresByVisits.map((s) => s.visits));
 
-    // When the keyboard is active, always present the surface as \"chat\" (even if there are no messages yet).
-    if (!isEmptySearch || keyboardOpen) {
-      return (
-        <View style={styles.chatSectionHeader}>
-          <Text style={[styles.chatSectionTitle, { color: textSecondary }]}>Conversation</Text>
+  const renderInsights = () => (
+    <ScrollView
+      style={styles.modeScroll}
+      contentContainerStyle={[
+        styles.insightsScrollInner,
+        { paddingBottom: tabBarReserve + 24 },
+      ]}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
+      {searchStatsLoading ? (
+        <View style={styles.statsLoading}>
+          <ActivityIndicator size="small" color={IOS_BLUE} />
         </View>
-      );
-    }
+      ) : searchStatsError ? (
+        <Text style={[styles.statsError, { color: textSecondary }]}>{searchStatsError}</Text>
+      ) : (
+        <>
+          {heroStore ? (
+            <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={LIQUID.shadow}>
+              <View style={styles.heroCardInner}>
+                <View style={[styles.heroAvatar, { backgroundColor: "rgba(10,132,255,0.22)" }]}>
+                  <Text style={[styles.heroAvatarText, { color: IOS_BLUE }]}>{heroInitials}</Text>
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={[styles.heroEyebrow, { color: textSecondary }]}>Top spend</Text>
+                  <Text style={[styles.heroTitle, { color: textPrimary }]} numberOfLines={2}>
+                    {heroStore.name}
+                  </Text>
+                  <Text style={[styles.heroAmount, { color: textPrimary }]}>{fmtMoney(heroStore.totalSpend)}</Text>
+                </View>
+              </View>
+            </GlassSurface>
+          ) : null}
 
-    const statLine = (icon: ReactNode, label: string, value: string) => (
-      <View style={[styles.statRow, { borderColor: "rgba(255,255,255,0.1)" }]}>
-        <View style={styles.statRowIcon}>{icon}</View>
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.statLabel, { color: textSecondary }]}>{label}</Text>
-          <Text style={[styles.statValue, { color: textPrimary }]} numberOfLines={2}>
-            {value}
+          <View style={{ marginTop: SECTION_GAP }}>
+            <Text style={[styles.sectionTitle, { color: textPrimary }]}>Spending by category</Text>
+            <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, { marginTop: 12 }]}>
+              <View style={{ padding: CARD_PADDING }}>
+                {statsSafe.topCategories.length === 0 ? (
+                  <Text style={{ color: textSecondary }}>No category data yet. Add verified receipts with item categories.</Text>
+                ) : (
+                  statsSafe.topCategories.map((c, i) => (
+                    <View key={`cat-${i}-${c.name}`}>
+                      {insightBar(c.name, c.amount, maxCat || 1, ["#34C759", "#007AFF", "#FF9500", "#AF52DE", "#FF3B30"][i % 5])}
+                    </View>
+                  ))
+                )}
+              </View>
+            </GlassSurface>
+          </View>
+
+          <View style={{ marginTop: SECTION_GAP }}>
+            <Text style={[styles.sectionTitle, { color: textPrimary }]}>Top stores by spend</Text>
+            <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, { marginTop: 12 }]}>
+              <View style={{ padding: CARD_PADDING }}>
+                {statsSafe.topStoresBySpend.length === 0 ? (
+                  <Text style={{ color: textSecondary }}>No store spend data yet.</Text>
+                ) : (
+                  statsSafe.topStoresBySpend.map((s, i) => (
+                    <View key={`spend-${i}-${s.name}`}>
+                      {insightBar(s.name, s.totalSpend, maxSpend || 1, ["#007AFF", "#34C759", "#FF9500", "#AF52DE", "#5856D6"][i % 5])}
+                    </View>
+                  ))
+                )}
+              </View>
+            </GlassSurface>
+          </View>
+
+          <View style={{ marginTop: SECTION_GAP }}>
+            <Text style={[styles.sectionTitle, { color: textPrimary }]}>Store visits</Text>
+            <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, { marginTop: 12 }]}>
+              <View style={{ padding: CARD_PADDING }}>
+                {statsSafe.topStoresByVisits.length === 0 ? (
+                  <Text style={{ color: textSecondary }}>No visits yet.</Text>
+                ) : (
+                  statsSafe.topStoresByVisits.map((s, i) => (
+                    <View key={`vis-${i}-${s.name}`}>
+                      {insightBar(`${s.name} (visits)`, s.visits, maxVisits || 1, ["#5AC8FA", "#007AFF", "#FF9500", "#FF2D55", "#32ADE6"][i % 5])}
+                    </View>
+                  ))
+                )}
+              </View>
+            </GlassSurface>
+          </View>
+
+          <View style={{ marginTop: SECTION_GAP }}>
+            <Text style={[styles.sectionTitle, { color: textPrimary }]}>Summary</Text>
+            <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, { marginTop: 12 }]}>
+              <View style={{ padding: CARD_PADDING }}>
+                {statLine(
+                  <CalendarDays size={18} color={IOS_BLUE} />,
+                  "Last 30 days (avg / day)",
+                  searchStats ? `${fmtMoney(searchStats.last30Days.avgPerDay)} · ${fmtMoney(searchStats.last30Days.totalSpend)} total` : "—"
+                )}
+                {statLine(
+                  <Users size={18} color={IOS_BLUE} />,
+                  "Community avg price (weighted)",
+                  searchStats?.community ? fmtMoney(searchStats.community.weightedAvgPrice) : "No community data yet"
+                )}
+                {searchStats?.mostVisitedStore ? (
+                  statLine(
+                    <Store size={18} color={IOS_BLUE} />,
+                    "Most visited store",
+                    `${searchStats.mostVisitedStore.name} · ${searchStats.mostVisitedStore.visits} visits`
+                  )
+                ) : null}
+                {searchStats?.topCategory ? (
+                  statLine(
+                    <Tag size={18} color={IOS_BLUE} />,
+                    "Top category",
+                    `${searchStats.topCategory.name} · ${fmtMoney(searchStats.topCategory.amount)}`
+                  )
+                ) : null}
+              </View>
+            </GlassSurface>
+          </View>
+        </>
+      )}
+    </ScrollView>
+  );
+
+  const assistantSummaryLong = (text: string) => {
+    const t = cleanAnswer(text);
+    return t.length > 280 || t.split("\n").length > 6;
+  };
+
+  const renderChat = () => (
+    <FlatList
+      style={styles.chatList}
+      ref={(r) => {
+        listRef.current = r;
+      }}
+      data={messages}
+      keyExtractor={(m) => m.id}
+      contentContainerStyle={[
+        styles.chatContent,
+        hasChatMessages ? styles.chatContentGrow : null,
+        { paddingBottom: listContentPaddingBottom, paddingTop: 4 },
+      ]}
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="interactive"
+      ListEmptyComponent={
+        <View style={styles.chatEmptyWrap}>
+          <Text style={[styles.chatEmptyText, { color: textSecondary }]}>
+            Try a suggestion below or ask about spending, stores, and prices.
           </Text>
         </View>
-      </View>
-    );
+      }
+      onContentSizeChange={() => {
+        if (!hasChatMessages) return;
+        if (!keyboardOpen && !shouldAutoScrollRef.current) return;
+        shouldAutoScrollRef.current = false;
+        scrollToBottomSoon();
+      }}
+      renderItem={({ item, index }) => {
+        const isUser = item.role === "user";
+        const bubbleBorder = isUser
+          ? "rgba(255,255,255,0.12)"
+          : isDarkMode
+            ? "rgba(255,255,255,0.14)"
+            : "rgba(0,0,0,0.10)";
 
-    return (
-      <View style={{ paddingBottom: 2 }}>
-        <View style={[styles.statsCard, { backgroundColor: glass, borderColor: "rgba(255,255,255,0.14)" }, SHADOW.card]}>
-          <Text style={[styles.statsTitle, { color: textPrimary }]}>Your snapshot</Text>
-          {searchStatsLoading ? (
-            <View style={styles.statsLoading}>
-              <ActivityIndicator size="small" color={IOS_BLUE} />
+        if (isUser) {
+          return (
+            <View style={[styles.msgRow, { marginTop: index === 0 ? 0 : BUBBLE_GAP, justifyContent: "flex-end" }]}>
+              <View style={[styles.bubble, { backgroundColor: IOS_BLUE, borderColor: bubbleBorder }]}>
+                <Text style={[styles.bubbleText, { color: "#FFF" }]}>{item.text}</Text>
+              </View>
             </View>
-          ) : searchStatsError ? (
-            <Text style={[styles.statsError, { color: textSecondary }]}>{searchStatsError}</Text>
-          ) : (
-            <>
-              {statLine(
-                <Store size={18} color={IOS_BLUE} />,
-                "Most visited store",
-                searchStats?.mostVisitedStore
-                  ? `${searchStats.mostVisitedStore.name} · ${searchStats.mostVisitedStore.visits} visit${
-                      searchStats.mostVisitedStore.visits === 1 ? "" : "s"
-                    }`
-                  : "No data yet"
-              )}
-              {statLine(
-                <Tag size={18} color={IOS_BLUE} />,
-                "Most spent category",
-                searchStats?.topCategory
-                  ? `${searchStats.topCategory.name} · ${fmtMoney(searchStats.topCategory.amount)}`
-                  : "No data yet"
-              )}
-              {statLine(
-                <CalendarDays size={18} color={IOS_BLUE} />,
-                "Avg spent / day (last 30 days)",
-                searchStats ? `${fmtMoney(searchStats.last30Days.avgPerDay)} · receipts` : "—"
-              )}
-              {statLine(
-                <Users size={18} color={IOS_BLUE} />,
-                "Community avg price (weighted)",
-                searchStats?.community
-                  ? fmtMoney(searchStats.community.weightedAvgPrice)
-                  : "No community data yet"
-              )}
-            </>
-          )}
-        </View>
-        {chatStarter}
-      </View>
-    );
-  }, [
-    glass,
-    isEmptySearch,
-    keyboardOpen,
-    searchStats,
-    searchStatsError,
-    searchStatsLoading,
-    promptRows,
-    textPrimary,
-    textSecondary,
-  ]);
+          );
+        }
 
-  const listFooter = useMemo(() => {
-    if (isEmptySearch || keyboardOpen) return null;
-    return (
-      <View style={[styles.chatPromptsSection, styles.chatPromptsSectionBelowChat]}>
-        <Text style={[styles.chatPromptsSectionTitle, { color: textSecondary }]}>Try asking</Text>
-        {promptRows}
-      </View>
-    );
-  }, [isEmptySearch, keyboardOpen, promptRows, textSecondary]);
+        const expanded = expandedAssistantIds[item.id] === true;
+        const long = assistantSummaryLong(item.text);
+
+        return (
+          <View style={[styles.msgRow, { marginTop: index === 0 ? 0 : BUBBLE_GAP, justifyContent: "flex-start" }]}>
+            <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.summaryCardOuter]}>
+              <View style={{ padding: CARD_PADDING }}>
+              <Text style={[styles.summaryCardLabel, { color: textSecondary }]}>Summary</Text>
+              <Text
+                style={[styles.summaryCardBody, { color: textPrimary }]}
+                numberOfLines={expanded || !long ? undefined : 5}
+              >
+                {cleanAnswer(item.text)}
+              </Text>
+              {long ? (
+                <TouchableOpacity
+                  onPress={() => toggleAssistantExpand(item.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={expanded ? "Show less" : "Show more"}
+                  style={styles.showMoreBtn}
+                >
+                  <Text style={[styles.showMoreText, { color: IOS_BLUE }]}>
+                    {expanded ? "Show less" : "Show more"}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+              {item.meta?.kind === "basket_cta" ? (
+                <View style={styles.ctaRow}>
+                  <TouchableOpacity
+                    style={[styles.ctaBtn, { backgroundColor: IOS_BLUE, opacity: insightsLoading ? 0.8 : 1 }]}
+                    onPress={finalizeBasket}
+                    disabled={insightsLoading}
+                    accessibilityRole="button"
+                    accessibilityLabel="Finalize basket"
+                  >
+                    {insightsLoading ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : (
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <ShoppingBasket size={16} color="#FFF" />
+                        <Text style={styles.ctaBtnText}>Finalize basket</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.ctaBtnGhost, { borderColor: "rgba(255,255,255,0.18)" }]}
+                    onPress={() => setBasket([])}
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear basket"
+                  >
+                    <Trash2 size={16} color={IOS_RED} />
+                    <Text style={[styles.ctaGhostText, { color: IOS_RED }]}>Clear</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+              </View>
+            </GlassSurface>
+          </View>
+        );
+      }}
+    />
+  );
+
+  const setSegment = useCallback((mode: SearchScreenMode) => {
+    setSearchMode(mode);
+    if (mode === "insights") {
+      Keyboard.dismiss();
+    }
+  }, []);
 
   return (
     <View style={[styles.container, { backgroundColor: bg }]}>
@@ -436,112 +613,77 @@ export default function SearchScreen() {
         <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
           <View style={styles.headerRow}>
             <View style={styles.headerTitleWrap}>
-              <Text
-                style={[styles.title, { color: textPrimary }]}
-                numberOfLines={1}
-                accessibilityRole="header"
-              >
+              <Text style={[styles.title, { color: textPrimary }]} numberOfLines={1} accessibilityRole="header">
                 Search
               </Text>
             </View>
-            {messages.length > 0 ? (
+            {isChatMode && messages.length > 0 ? (
               <TouchableOpacity
-                onPress={closeChat}
+                onPress={clearChatAndInsights}
                 style={styles.headerCloseBtn}
                 accessibilityRole="button"
-                accessibilityLabel="Close conversation"
+                accessibilityLabel="Clear conversation"
                 hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
               >
-                <Text style={[styles.headerCloseText, { color: IOS_BLUE }]}>Close</Text>
+                <Text style={[styles.headerCloseText, { color: IOS_BLUE }]}>Clear</Text>
               </TouchableOpacity>
             ) : null}
           </View>
+
+          {searchMode === "insights" ? (
+            <View style={styles.chromeRow} accessibilityLabel="Search and discovery">
+              <GlassSurface isDark={isDarkMode} borderRadius={24} intensity={56} style={styles.chromeTileGlass}>
+                <View style={styles.chromeTileInner}>
+                  <Text style={[styles.chromeTileText, { color: IOS_BLUE }]}>{heroInitials}</Text>
+                </View>
+              </GlassSurface>
+              <GlassSurface isDark={isDarkMode} borderRadius={14} intensity={52} style={styles.chromeSearchGlass}>
+                <TextInput
+                  ref={inputRef}
+                  value={composer}
+                  onChangeText={(t) => {
+                    setComposer(t);
+                    if (t.trim().length > 0) setSearchMode("chat");
+                  }}
+                  onFocus={() => setSearchMode("chat")}
+                  placeholder="Search spending, stores, categories…"
+                  placeholderTextColor={textSecondary}
+                  style={[styles.chromeSearchField, { color: textPrimary }]}
+                  returnKeyType="search"
+                  editable={searchHydrated}
+                  accessibilityLabel="Search your spending"
+                />
+              </GlassSurface>
+            </View>
+          ) : null}
+
+          <GlassSurface isDark={isDarkMode} borderRadius={16} intensity={44} style={[LIQUID.shadow, styles.segmentGlass]}>
+            <View style={styles.segmentWrap} accessibilityRole="tablist" accessibilityLabel="Search mode">
+              <TouchableOpacity
+                style={[styles.segmentBtn, searchMode === "chat" && styles.segmentBtnActive]}
+                onPress={() => setSegment("chat")}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: searchMode === "chat" }}
+                accessibilityLabel="Chat"
+              >
+                <Text style={[styles.segmentBtnText, { color: searchMode === "chat" ? IOS_BLUE : textSecondary }]}>Chat</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.segmentBtn, searchMode === "insights" && styles.segmentBtnActive]}
+                onPress={() => setSegment("insights")}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: searchMode === "insights" }}
+                accessibilityLabel="Insights"
+              >
+                <Text style={[styles.segmentBtnText, { color: searchMode === "insights" ? IOS_BLUE : textSecondary }]}>
+                  Insights
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </GlassSurface>
         </View>
 
-        <FlatList
-          style={styles.chatList}
-          ref={(r) => {
-            listRef.current = r;
-          }}
-          data={flatListData}
-          keyExtractor={(m) => m.id}
-          contentContainerStyle={[
-            styles.chatContent,
-            hasChatMessages ? styles.chatContentGrow : null,
-            {
-              paddingBottom: listContentPaddingBottom,
-            },
-          ]}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          onContentSizeChange={() => {
-            if (!hasChatMessages) return;
-            if (!keyboardOpen && !shouldAutoScrollRef.current) return;
-            shouldAutoScrollRef.current = false;
-            scrollToBottomSoon();
-          }}
-          renderItem={({ item, index }) => {
-            const isUser = item.role === "user";
-            const assistantBubbleBg = isDarkMode ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.05)";
-            const bubbleBg = isUser ? IOS_BLUE : assistantBubbleBg;
-            const bubbleText = isUser ? "#FFF" : textPrimary;
-            const bubbleBorder = isUser
-              ? "rgba(255,255,255,0.12)"
-              : isDarkMode
-                ? "rgba(255,255,255,0.14)"
-                : "rgba(0,0,0,0.10)";
-            return (
-              <View
-                style={[
-                  styles.msgRow,
-                  { marginTop: index === 0 ? 6 : 12, justifyContent: isUser ? "flex-end" : "flex-start" },
-                ]}
-              >
-                <View
-                  style={[
-                    styles.bubble,
-                    { backgroundColor: bubbleBg, borderColor: bubbleBorder },
-                    !isUser ? styles.assistantBubbleShadow : null,
-                  ]}
-                >
-                  <Text style={[styles.bubbleText, { color: bubbleText }]}>{item.text}</Text>
-                  {item.meta?.kind === "basket_cta" ? (
-                    <View style={styles.ctaRow}>
-                      <TouchableOpacity
-                        style={[styles.ctaBtn, { backgroundColor: IOS_BLUE, opacity: insightsLoading ? 0.8 : 1 }]}
-                        onPress={finalizeBasket}
-                        disabled={insightsLoading}
-                        accessibilityRole="button"
-                        accessibilityLabel="Finalize basket"
-                      >
-                        {insightsLoading ? (
-                          <ActivityIndicator size="small" color="#FFF" />
-                        ) : (
-                          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                            <ShoppingBasket size={16} color="#FFF" />
-                            <Text style={styles.ctaBtnText}>Finalize basket</Text>
-                          </View>
-                        )}
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.ctaBtnGhost, { borderColor: "rgba(255,255,255,0.18)" }]}
-                        onPress={() => setBasket([])}
-                        accessibilityRole="button"
-                        accessibilityLabel="Clear basket"
-                      >
-                        <Trash2 size={16} color={IOS_RED} />
-                        <Text style={[styles.ctaGhostText, { color: IOS_RED }]}>Clear</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                </View>
-              </View>
-            );
-          }}
-          ListHeaderComponent={listHeader}
-          ListFooterComponent={listFooter}
-        />
+        {searchMode === "insights" ? renderInsights() : renderChat()}
 
         <Modal
           visible={basketModalOpen}
@@ -550,10 +692,7 @@ export default function SearchScreen() {
           onRequestClose={() => setBasketModalOpen(false)}
         >
           <View style={styles.modalBackdrop}>
-            <KeyboardAvoidingView
-              behavior={Platform.OS === "ios" ? "padding" : undefined}
-              style={styles.modalSheetWrap}
-            >
+            <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalSheetWrap}>
               <View
                 style={[
                   styles.modalSheet,
@@ -578,8 +717,7 @@ export default function SearchScreen() {
                 >
                   {basket.length === 0 ? (
                     <Text style={[styles.modalEmpty, { color: textSecondary }]}>
-                      No items yet. Add lines below, or use chat to add several items at once (e.g. a list in one
-                      message).
+                      No items yet. Add lines below, or paste a list in chat.
                     </Text>
                   ) : (
                     basket.map((it, idx) => (
@@ -655,120 +793,106 @@ export default function SearchScreen() {
           </View>
         </Modal>
 
-        <View
-          style={[
-            styles.composerWrap,
-            {
-              backgroundColor: bg,
-              borderTopColor: "rgba(255,255,255,0.12)",
-              borderTopWidth: StyleSheet.hairlineWidth,
-              paddingTop: isEmptySearch ? 8 : 10,
-              paddingBottom: 10 + tabBarReserve,
-            },
-          ]}
-          onLayout={(e) => setComposerAreaHeight(e.nativeEvent.layout.height)}
-        >
-          <View style={styles.engineRow} accessibilityRole="tablist" accessibilityLabel="Chat mode">
-            <TouchableOpacity
-              style={[
-                styles.engineChip,
-                chatEngine === "data" && styles.engineChipActive,
-                { borderColor: chatEngine === "data" ? IOS_BLUE : "rgba(255,255,255,0.18)", opacity: searchHydrated ? 1 : 0.5 },
-              ]}
-              onPress={() => setChatEngine("data")}
-              disabled={!searchHydrated}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: chatEngine === "data", disabled: !searchHydrated }}
-              accessibilityLabel="Data answers from your receipts"
-            >
-              <Text style={[styles.engineChipText, { color: chatEngine === "data" ? IOS_BLUE : textSecondary }]}>
-                Data
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.engineChip,
-                chatEngine === "general" && styles.engineChipActive,
-                {
-                  borderColor: chatEngine === "general" ? IOS_BLUE : "rgba(255,255,255,0.18)",
-                  opacity: searchHydrated ? 1 : 0.5,
-                },
-              ]}
-              onPress={() => setChatEngine("general")}
-              disabled={!searchHydrated}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: chatEngine === "general", disabled: !searchHydrated }}
-              accessibilityLabel="General assistant"
-            >
-              <Text style={[styles.engineChipText, { color: chatEngine === "general" ? IOS_BLUE : textSecondary }]}>
-                General
-              </Text>
-            </TouchableOpacity>
-          </View>
+        {isChatMode ? (
           <View
-            style={[styles.composerRow, { backgroundColor: glass }, SHADOW.card]}
-            onLayout={(e) => setComposerRowHeight(e.nativeEvent.layout.height)}
+            style={[
+              styles.composerWrap,
+              {
+                backgroundColor: bg,
+                borderTopColor: "rgba(255,255,255,0.12)",
+                borderTopWidth: StyleSheet.hairlineWidth,
+                paddingTop: 10,
+                paddingBottom: 10 + tabBarReserve,
+              },
+            ]}
+            onLayout={(e) => setComposerAreaHeight(e.nativeEvent.layout.height)}
           >
-            <TouchableOpacity
-              style={styles.composerBasketBtn}
-              onPress={() => setBasketModalOpen(true)}
-              accessibilityRole="button"
-              accessibilityLabel={basket.length ? `Basket, ${basket.length} items` : "Open basket"}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chipScroll}
+              keyboardShouldPersistTaps="handled"
             >
-              <ShoppingBasket size={22} color={IOS_BLUE} />
-              {basket.length > 0 ? (
-                <View style={[styles.composerBasketBadge, { backgroundColor: IOS_BLUE }]}>
-                  <Text style={styles.composerBasketBadgeText}>{basket.length > 9 ? "9+" : basket.length}</Text>
-                </View>
-              ) : null}
-            </TouchableOpacity>
-            <TextInput
-              value={composer}
-              onChangeText={setComposer}
-              placeholder={searchHydrated ? "Ask about prices, stores, or spending…" : "Loading saved chat…"}
-              placeholderTextColor={textSecondary}
-              style={[styles.composerInput, { color: textPrimary, height: composerInputHeight }]}
-              autoCapitalize="sentences"
-              multiline
-              returnKeyType="send"
-              editable={searchHydrated}
-              accessibilityLabel="Ask SmartBudget"
-              scrollEnabled={composerInputHeight >= 96}
-              onContentSizeChange={(e) => {
-                // Expand up to ~5 lines, then allow internal scrolling.
-                const h = e.nativeEvent.contentSize.height;
-                const clamped = Math.max(22, Math.min(h, 96));
-                if (Math.abs(clamped - composerInputHeight) > 1) setComposerInputHeight(clamped);
-              }}
-              onSubmitEditing={() => {
-                if (Platform.OS !== "ios") send(composer);
-              }}
-            />
-            <TouchableOpacity
-              onPress={() => send(composer)}
-              style={[
-                styles.sendBtnInline,
-                {
-                  backgroundColor: IOS_BLUE,
-                  opacity: !searchHydrated || running ? 0.7 : 1,
-                },
-              ]}
-              disabled={!searchHydrated || running}
-              accessibilityRole="button"
-              accessibilityLabel="Send"
-              hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+              {quickPrompts.map((p) => (
+                <GlassSurface key={p.label} isDark={isDarkMode} borderRadius={999} intensity={38} style={styles.chipGlass}>
+                  <TouchableOpacity
+                    style={styles.chipInner}
+                    onPress={() => onQuickAction(p.text)}
+                    disabled={!searchHydrated}
+                    accessibilityRole="button"
+                    accessibilityLabel={p.label}
+                  >
+                    <Sparkles size={14} color={IOS_BLUE} />
+                    <Text style={[styles.chipText, { color: textPrimary }]}>{p.label}</Text>
+                  </TouchableOpacity>
+                </GlassSurface>
+              ))}
+            </ScrollView>
+
+            <GlassSurface isDark={isDarkMode} borderRadius={999} intensity={48} style={[LIQUID.shadow, styles.composerGlass]}>
+            <View
+              style={styles.composerRow}
+              onLayout={(e) => setComposerRowHeight(e.nativeEvent.layout.height)}
             >
-              {running ? (
-                <ActivityIndicator size="small" color="#FFF" />
-              ) : !searchHydrated ? (
-                <ActivityIndicator size="small" color="#FFF" />
-              ) : (
-                <Send size={18} color="#FFF" />
-              )}
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.composerBasketBtn}
+                onPress={() => setBasketModalOpen(true)}
+                accessibilityRole="button"
+                accessibilityLabel={basket.length ? `Basket, ${basket.length} items` : "Open basket"}
+                hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+              >
+                <ShoppingBasket size={22} color={IOS_BLUE} />
+                {basket.length > 0 ? (
+                  <View style={[styles.composerBasketBadge, { backgroundColor: IOS_BLUE }]}>
+                    <Text style={styles.composerBasketBadgeText}>{basket.length > 9 ? "9+" : basket.length}</Text>
+                  </View>
+                ) : null}
+              </TouchableOpacity>
+              <TextInput
+                value={composer}
+                onChangeText={setComposer}
+                placeholder={searchHydrated ? "Ask about prices, stores, or spending…" : "Loading…"}
+                placeholderTextColor={textSecondary}
+                style={[styles.composerInput, { color: textPrimary, height: composerInputHeight }]}
+                autoCapitalize="sentences"
+                multiline
+                returnKeyType="send"
+                editable={searchHydrated}
+                accessibilityLabel="Ask SmartBudget"
+                scrollEnabled={composerInputHeight >= 96}
+                onContentSizeChange={(e) => {
+                  const h = e.nativeEvent.contentSize.height;
+                  const clamped = Math.max(22, Math.min(h, 96));
+                  if (Math.abs(clamped - composerInputHeight) > 1) setComposerInputHeight(clamped);
+                }}
+                onSubmitEditing={() => {
+                  if (Platform.OS !== "ios") send(composer);
+                }}
+              />
+              <TouchableOpacity
+                onPress={() => send(composer)}
+                style={[
+                  styles.sendBtnInline,
+                  {
+                    backgroundColor: IOS_BLUE,
+                    opacity: !searchHydrated || running ? 0.7 : 1,
+                  },
+                ]}
+                disabled={!searchHydrated || running}
+                accessibilityRole="button"
+                accessibilityLabel="Send"
+                hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+              >
+                {running || !searchHydrated ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Send size={18} color="#FFF" />
+                )}
+              </TouchableOpacity>
+            </View>
+            </GlassSurface>
           </View>
-        </View>
+        ) : null}
       </KeyboardAvoidingView>
     </View>
   );
@@ -796,56 +920,103 @@ const styles = StyleSheet.create({
   },
   headerCloseText: { fontSize: TYPE.secondary, fontWeight: "700" },
   title: { fontSize: TYPE.pageTitle, fontWeight: "800", marginBottom: 2 },
-  sub: { fontSize: TYPE.helper },
+  chromeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  chromeTileGlass: {
+    width: 48,
+    height: 48,
+  },
+  chromeTileInner: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 48,
+  },
+  chromeTileText: { fontSize: 18, fontWeight: "800" },
+  chromeSearchGlass: {
+    flex: 1,
+    minHeight: 46,
+  },
+  chromeSearchField: {
+    flex: 1,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: TYPE.body,
+    backgroundColor: "transparent",
+  },
+  segmentGlass: {
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  segmentWrap: {
+    flexDirection: "row",
+    gap: 8,
+    padding: 6,
+  },
+  segmentBtn: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 10,
+    backgroundColor: "transparent",
+  },
+  segmentBtnActive: {
+    backgroundColor: "rgba(10,132,255,0.18)",
+  },
+  segmentBtnText: { fontSize: TYPE.secondary, fontWeight: "800" },
+
+  modeScroll: { flex: 1 },
+  insightsScrollInner: {
+    paddingHorizontal: SPACING.pageHorizontal,
+    paddingTop: 8,
+  },
+  sectionTitle: { fontSize: TYPE.sectionTitle, fontWeight: "800" },
+  heroCardInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    padding: CARD_PADDING,
+  },
+  heroAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroAvatarText: { fontSize: 20, fontWeight: "800" },
+  heroEyebrow: { fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5 },
+  heroTitle: { fontSize: TYPE.secondary, fontWeight: "800", marginTop: 2 },
+  heroAmount: { fontSize: TYPE.pageTitle, fontWeight: "800", marginTop: 4 },
+  barRowWrap: { marginBottom: 14 },
+  barRowHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6, gap: 8 },
+  barRowLabel: { flex: 1, fontSize: TYPE.secondary, fontWeight: "600" },
+  barRowValue: { fontSize: TYPE.secondary, fontWeight: "700" },
+  barTrack: {
+    height: 8,
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  barFill: {
+    height: "100%",
+    borderRadius: 4,
+  },
 
   chatList: { flex: 1 },
   chatContent: { paddingHorizontal: SPACING.pageHorizontal, paddingBottom: 10 },
   chatContentGrow: { flexGrow: 1 },
-  chatStripFixed: {
-    paddingHorizontal: SPACING.pageHorizontal,
-    paddingTop: 10,
-    paddingBottom: 4,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
-  chatSurfaceHelper: { fontSize: TYPE.helper, fontWeight: "600", marginBottom: 6 },
-  chatSectionHeader: { paddingTop: 2, paddingBottom: 10 },
-  chatSectionTitle: { fontSize: 11, fontWeight: "800", letterSpacing: 0.5, textTransform: "uppercase" },
-  chatPromptsSection: { paddingBottom: 12 },
-  chatPromptsSectionBelowStats: { marginTop: 6 },
-  chatPromptsSectionBelowChat: {
-    marginTop: 8,
-    paddingTop: 16,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.12)",
-  },
-  chatPromptsSectionTitle: {
-    fontSize: TYPE.helper,
-    fontWeight: "800",
-    marginBottom: 10,
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-  },
-  promptRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: RADIUS.button,
-    borderWidth: StyleSheet.hairlineWidth,
-    marginBottom: 8,
-  },
-  promptRowLabel: { fontSize: TYPE.secondary, fontWeight: "700" },
-  promptRowHint: { fontSize: 11, marginTop: 3, lineHeight: 15 },
-  statsCard: {
-    marginTop: 4,
-    marginBottom: 14,
-    padding: 16,
-    borderRadius: RADIUS.card,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  statsTitle: { fontSize: TYPE.sectionTitle, fontWeight: "800", marginBottom: 12 },
-  statsLoading: { paddingVertical: 16, alignItems: "center" },
+  chatEmptyWrap: { paddingVertical: 32, paddingHorizontal: 8 },
+  chatEmptyText: { fontSize: TYPE.body, textAlign: "center", lineHeight: 22 },
+
+  statsLoading: { paddingVertical: 24, alignItems: "center" },
   statsError: { fontSize: TYPE.body, lineHeight: 21 },
   statRow: {
     flexDirection: "row",
@@ -912,32 +1083,58 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderWidth: 1,
   },
-  assistantBubbleShadow: SHADOW.card,
   bubbleText: { fontSize: TYPE.body, lineHeight: 21 },
-  ctaRow: { flexDirection: "row", gap: 10, marginTop: 10, alignItems: "center" },
+  summaryCardOuter: {
+    maxWidth: "100%",
+    width: "100%",
+  },
+  summaryCardLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    marginBottom: 8,
+  },
+  summaryCardBody: { fontSize: TYPE.body, lineHeight: 22 },
+  showMoreBtn: { marginTop: 10, paddingVertical: 4 },
+  showMoreText: { fontSize: TYPE.secondary, fontWeight: "700" },
+  ctaRow: { flexDirection: "row", gap: 10, marginTop: 14, alignItems: "center" },
   ctaBtn: { flex: 1, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
   ctaBtnText: { color: "#FFF", fontSize: TYPE.secondary, fontWeight: "800" },
-  ctaBtnGhost: { flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", height: 44, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1 },
+  ctaBtnGhost: {
+    flexDirection: "row",
+    gap: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    height: 44,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
   ctaGhostText: { fontSize: TYPE.secondary, fontWeight: "700" },
 
-  engineRow: {
+  chipScroll: {
+    flexDirection: "row",
+    gap: 8,
+    paddingBottom: 10,
+    paddingHorizontal: 0,
+  },
+  chipGlass: {
+    marginRight: 4,
+  },
+  chipInner: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    marginBottom: 4,
-  },
-  engineChip: {
-    paddingVertical: 8,
+    gap: 6,
+    paddingVertical: 10,
     paddingHorizontal: 14,
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    minHeight: 36,
-    justifyContent: "center",
   },
-  engineChipActive: {
-    backgroundColor: "rgba(10,132,255,0.12)",
+  chipText: { fontSize: TYPE.secondary, fontWeight: "700" },
+
+  composerGlass: {
+    marginTop: 4,
   },
-  engineChipText: { fontSize: TYPE.secondary, fontWeight: "700" },
+
   composerWrap: {
     paddingHorizontal: SPACING.pageHorizontal,
     paddingTop: 10,
@@ -947,12 +1144,9 @@ const styles = StyleSheet.create({
   composerRow: {
     flexDirection: "row",
     alignItems: "flex-end",
-    borderRadius: 999,
     paddingLeft: 6,
     paddingRight: 6,
     paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
     gap: 4,
   },
   composerBasketBtn: {
@@ -992,4 +1186,3 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
 });
-

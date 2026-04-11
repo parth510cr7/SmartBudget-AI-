@@ -1,13 +1,14 @@
-import { View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { Tabs } from "expo-router";
 import { Home, Search, Camera, Users } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "../../src/store/useStore";
-import { getTheme, IOS_BLUE } from "../../src/theme";
+import { GlassSurface } from "../../src/components/GlassSurface";
+import { getTheme, IOS_BLUE, LIQUID } from "../../src/theme";
 
 export default function TabLayout() {
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
-  const { bg, glass, textPrimary, textSecondary } = getTheme(isDarkMode);
+  const { textPrimary, textSecondary } = getTheme(isDarkMode);
   const insets = useSafeAreaInsets();
   const tabBarBottom = Math.max(12, insets.bottom + 8);
 
@@ -17,34 +18,41 @@ export default function TabLayout() {
         tabBarActiveTintColor: IOS_BLUE,
         tabBarInactiveTintColor: textSecondary,
         tabBarHideOnKeyboard: true,
-        tabBarActiveBackgroundColor: "rgba(10,132,255,0.12)",
+        tabBarActiveBackgroundColor: "rgba(10,132,255,0.14)",
         tabBarInactiveBackgroundColor: "transparent",
         tabBarItemStyle: {
           alignItems: "center",
           justifyContent: "center",
           borderRadius: 18,
-          marginHorizontal: 8,
+          marginHorizontal: 4,
           marginVertical: 10,
         },
         tabBarIconStyle: {
           alignSelf: "center",
         },
+        tabBarBackground: () => (
+          <View style={StyleSheet.absoluteFill} pointerEvents="none">
+            <GlassSurface
+              isDark={isDarkMode}
+              borderRadius={36}
+              intensity={isDarkMode ? 50 : 68}
+              style={[StyleSheet.absoluteFill, LIQUID.shadow]}
+            >
+              <View style={{ flex: 1 }} />
+            </GlassSurface>
+          </View>
+        ),
         tabBarStyle: {
           position: "absolute",
           bottom: tabBarBottom,
           left: 24,
           right: 24,
           elevation: 0,
-          backgroundColor: glass,
+          backgroundColor: "transparent",
           borderRadius: 36,
           height: 72,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.1,
-          shadowRadius: 20,
           borderTopWidth: 0,
-          borderWidth: 1,
-          borderColor: "rgba(255, 255, 255, 0.5)",
+          borderWidth: 0,
         },
         tabBarShowLabel: true,
         headerShown: true,
@@ -55,14 +63,6 @@ export default function TabLayout() {
         options={{
           title: "Home",
           tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
-        }}
-      />
-      <Tabs.Screen
-        name="search"
-        options={{
-          title: "Search",
-          tabBarIcon: ({ color, size }) => <Search color={color} size={size} />,
-          headerShown: false,
         }}
       />
       <Tabs.Screen
@@ -77,6 +77,14 @@ export default function TabLayout() {
         options={{
           title: "Shared",
           tabBarIcon: ({ color, size }) => <Users color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="search"
+        options={{
+          title: "Search",
+          tabBarIcon: ({ color, size }) => <Search color={color} size={size} />,
+          headerShown: false,
         }}
       />
       <Tabs.Screen

@@ -171,6 +171,12 @@ export async function getStores(idToken: string | null): Promise<StoreRow[]> {
 export type SearchStatsResponse = {
   mostVisitedStore: { name: string; visits: number } | null;
   topCategory: { name: string; amount: number } | null;
+  /** Top 5 categories by spend (same rules as snapshot). */
+  topCategories: { name: string; amount: number }[];
+  /** Top 5 stores by total receipt amount (VERIFIED). */
+  topStoresBySpend: { name: string; totalSpend: number }[];
+  /** Top 5 stores by visit count (receipt rows). */
+  topStoresByVisits: { name: string; visits: number }[];
   last30Days: { totalSpend: number; avgPerDay: number };
   community: { weightedAvgPrice: number } | null;
 };

@@ -4,7 +4,8 @@ import * as Clipboard from "expo-clipboard";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Home, Users, Link as LinkIcon, LogOut, Trash2, X } from "lucide-react-native";
 import { useStore } from "../src/store/useStore";
-import { getTheme, IOS_BLUE, IOS_RED, SPACING, RADIUS } from "../src/theme";
+import { GlassSurface } from "../src/components/GlassSurface";
+import { getTheme, IOS_BLUE, IOS_RED, SPACING, RADIUS, LIQUID } from "../src/theme";
 import {
   getMyHousehold,
   createHousehold,
@@ -31,7 +32,7 @@ export default function HouseholdScreen() {
   const router = useRouter();
   const authToken = useStore((s) => (s.user as { idToken?: string } | null)?.idToken ?? null);
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
-  const { bg, glass, textPrimary, textSecondary } = getTheme(isDarkMode);
+  const { bg, textPrimary, textSecondary } = getTheme(isDarkMode);
 
   const [loading, setLoading] = useState(true);
   const [me, setMe] = useState<Awaited<ReturnType<typeof getMyHousehold>> | null>(null);
@@ -108,7 +109,7 @@ export default function HouseholdScreen() {
       </View>
 
       {!household ? (
-        <View style={[styles.card, { backgroundColor: glass }]}>
+        <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.card]}>
           <Text style={[styles.cardTitle, { color: textPrimary }]}>One roof, shared receipts</Text>
           <Text style={[styles.cardSub, { color: textSecondary }]}>
             Create a household (max 5 people) so everyone can contribute shared receipts. Each receipt can still be saved as Personal or Household.
@@ -124,10 +125,10 @@ export default function HouseholdScreen() {
             <Users size={18} color={textPrimary} />
             <Text style={[styles.secondaryBtnText, { color: textPrimary }]}>Join with invite link/token</Text>
           </TouchableOpacity>
-        </View>
+        </GlassSurface>
       ) : (
         <>
-          <View style={[styles.card, { backgroundColor: glass }]}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.card]}>
             <Text style={[styles.cardTitle, { color: textPrimary }]}>{household.name}</Text>
             <Text style={[styles.cardSub, { color: textSecondary }]}>{isOwner ? "Owner" : "Member"} · {memberCount}/{maxMembers} members</Text>
 
@@ -190,9 +191,9 @@ export default function HouseholdScreen() {
                 <Text style={[styles.leaveText, { color: IOS_RED }]}>Leave household</Text>
               </TouchableOpacity>
             )}
-          </View>
+          </GlassSurface>
 
-          <View style={[styles.card, { backgroundColor: glass }]}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.card]}>
             <Text style={[styles.sectionTitle, { color: textPrimary }]}>Members</Text>
             {(members?.members ?? []).map((m) => (
               <View key={m.userId} style={[styles.row, { borderBottomColor: bg }]}>
@@ -229,9 +230,9 @@ export default function HouseholdScreen() {
             {(members?.members?.length ?? 0) === 0 && (
               <Text style={[styles.emptyText, { color: textSecondary }]}>No members yet.</Text>
             )}
-          </View>
+          </GlassSurface>
 
-          <View style={[styles.card, { backgroundColor: glass }]}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.card]}>
             <Text style={[styles.sectionTitle, { color: textPrimary }]}>Top categories</Text>
             {topCategories.length === 0 ? (
               <Text style={[styles.emptyText, { color: textSecondary }]}>No shared receipts yet.</Text>
@@ -243,9 +244,9 @@ export default function HouseholdScreen() {
                 </View>
               ))
             )}
-          </View>
+          </GlassSurface>
 
-          <View style={[styles.card, { backgroundColor: glass }]}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.card]}>
             <Text style={[styles.sectionTitle, { color: textPrimary }]}>Top stores</Text>
             {topStores.length === 0 ? (
               <Text style={[styles.emptyText, { color: textSecondary }]}>No shared receipts yet.</Text>
@@ -257,9 +258,9 @@ export default function HouseholdScreen() {
                 </View>
               ))
             )}
-          </View>
+          </GlassSurface>
 
-          <View style={[styles.card, { backgroundColor: glass }]}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.card]}>
             <Text style={[styles.sectionTitle, { color: textPrimary }]}>Recent shared receipts</Text>
             {(dash?.recentReceipts ?? []).length === 0 ? (
               <Text style={[styles.emptyText, { color: textSecondary }]}>No shared receipts yet.</Text>
@@ -276,14 +277,14 @@ export default function HouseholdScreen() {
                 </View>
               ))
             )}
-          </View>
+          </GlassSurface>
         </>
       )}
 
       {/* Create modal */}
       <Modal visible={createOpen} transparent animationType="fade">
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { backgroundColor: glass }]}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.modalCard]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: textPrimary }]}>Create household</Text>
               <TouchableOpacity onPress={() => setCreateOpen(false)} hitSlop={12}>
@@ -320,14 +321,14 @@ export default function HouseholdScreen() {
             >
               {createBusy ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.primaryBtnText}>Create</Text>}
             </TouchableOpacity>
-          </View>
+          </GlassSurface>
         </View>
       </Modal>
 
       {/* Join modal */}
       <Modal visible={joinOpen} transparent animationType="fade">
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { backgroundColor: glass }]}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.modalCard]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: textPrimary }]}>Join household</Text>
               <TouchableOpacity onPress={() => setJoinOpen(false)} hitSlop={12}>
@@ -366,7 +367,7 @@ export default function HouseholdScreen() {
             >
               {joinBusy ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.primaryBtnText}>Join</Text>}
             </TouchableOpacity>
-          </View>
+          </GlassSurface>
         </View>
       </Modal>
     </ScrollView>
@@ -381,11 +382,8 @@ const styles = StyleSheet.create({
   backText: { fontSize: 16, fontWeight: "600" },
   headerTitle: { fontSize: 26, fontWeight: "800", letterSpacing: -0.5 },
   card: {
-    borderRadius: RADIUS.card,
     padding: SPACING.cardPadding,
     marginBottom: SPACING.sectionGap,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.2)",
   },
   cardTitle: { fontSize: 18, fontWeight: "800", marginBottom: 6 },
   cardSub: { fontSize: 13, lineHeight: 18 },

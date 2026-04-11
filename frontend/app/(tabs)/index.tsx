@@ -14,7 +14,8 @@ import {
 } from "lucide-react-native";
 import { getSummary, getReceipts, getStores, type SummaryCategory } from "../../src/api/client";
 import { useStore } from "../../src/store/useStore";
-import { getTheme, IOS_BLUE, SPACING, RADIUS, SHADOW } from "../../src/theme";
+import { GlassSurface } from "../../src/components/GlassSurface";
+import { getTheme, IOS_BLUE, SPACING, RADIUS, SHADOW, LIQUID } from "../../src/theme";
 
 function CategoryBarRow({
   name,
@@ -106,7 +107,7 @@ export default function DashboardScreen() {
     }, [fetchSummary, fetchStores, fetchRecent, refreshKey])
   );
 
-  const { bg, glass, textPrimary, textSecondary, overlay } = getTheme(isDarkMode);
+  const { bg, textPrimary, textSecondary, overlay } = getTheme(isDarkMode);
 
   const totalSpent = summary?.totalSpent ?? 0;
   const totalStores = summary?.totalStores ?? 0;
@@ -131,81 +132,91 @@ export default function DashboardScreen() {
         <Text style={[styles.greeting, { color: textPrimary }]}>Hello, {headerName}</Text>
 
         {lastReceiptInsight ? (
-          <View
-            style={[
-              styles.insightCard,
-              { backgroundColor: glass, borderColor: lastReceiptInsight.netDelta > 0.15 ? "rgba(255,149,0,0.35)" : "rgba(52,199,89,0.35)" },
-              SHADOW.card,
-            ]}
+          <GlassSurface
+            isDark={isDarkMode}
+            borderRadius={RADIUS.card}
+            style={[LIQUID.shadow, styles.insightCardOuter]}
           >
-            <View style={styles.insightHeader}>
-              <Sparkles size={20} color={IOS_BLUE} />
-              <Text style={[styles.insightTitle, { color: textPrimary }]}>Smart insight</Text>
-              <TouchableOpacity onPress={() => setLastReceiptInsight(null)} hitSlop={12} accessibilityLabel="Dismiss insight">
-                <X size={20} color={textSecondary} />
-              </TouchableOpacity>
+            <View
+              style={[
+                styles.insightCardInner,
+                {
+                  borderColor:
+                    lastReceiptInsight.netDelta > 0.15 ? "rgba(255,149,0,0.35)" : "rgba(52,199,89,0.35)",
+                },
+              ]}
+            >
+              <View style={styles.insightHeader}>
+                <Sparkles size={20} color={IOS_BLUE} />
+                <Text style={[styles.insightTitle, { color: textPrimary }]}>Smart insight</Text>
+                <TouchableOpacity onPress={() => setLastReceiptInsight(null)} hitSlop={12} accessibilityLabel="Dismiss insight">
+                  <X size={20} color={textSecondary} />
+                </TouchableOpacity>
+              </View>
+              <Text style={[styles.insightHeadline, { color: textPrimary }]}>{lastReceiptInsight.headline}</Text>
+              <Text style={[styles.insightSub, { color: textSecondary }]}>{lastReceiptInsight.subtext}</Text>
+              {lastReceiptInsight.lines.length > 0 ? (
+                <Text style={[styles.insightMeta, { color: textSecondary }]}>
+                  Compared {lastReceiptInsight.lines.length} line(s) · confidence {lastReceiptInsight.confidence}
+                </Text>
+              ) : null}
             </View>
-            <Text style={[styles.insightHeadline, { color: textPrimary }]}>{lastReceiptInsight.headline}</Text>
-            <Text style={[styles.insightSub, { color: textSecondary }]}>{lastReceiptInsight.subtext}</Text>
-            {lastReceiptInsight.lines.length > 0 ? (
-              <Text style={[styles.insightMeta, { color: textSecondary }]}>
-                Compared {lastReceiptInsight.lines.length} line(s) · confidence {lastReceiptInsight.confidence}
-              </Text>
-            ) : null}
-          </View>
+          </GlassSurface>
         ) : null}
 
         {/* Single hero: Total spent this period */}
-        <TouchableOpacity
-          style={[styles.heroCard, { backgroundColor: glass }, SHADOW.card]}
-          activeOpacity={0.8}
-          onPress={() => setShowTotalSpentModal(true)}
-        >
-          <Text style={[styles.heroValue, { color: textPrimary }]}>
-            {summary == null ? "$0.00" : `$${totalSpent.toFixed(2)}`}
-          </Text>
-          <Text style={[styles.heroLabel, { color: textSecondary }]}>Total spent</Text>
+        <TouchableOpacity activeOpacity={0.85} onPress={() => setShowTotalSpentModal(true)}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.heroCard]} intensity={52}>
+            <View style={styles.heroCardInner}>
+              <Text style={[styles.heroValue, { color: textPrimary }]}>
+                {summary == null ? "$0.00" : `$${totalSpent.toFixed(2)}`}
+              </Text>
+              <Text style={[styles.heroLabel, { color: textSecondary }]}>Total spent</Text>
+            </View>
+          </GlassSurface>
         </TouchableOpacity>
 
         {/* Supporting stat row */}
         <View style={styles.statRow}>
-          <TouchableOpacity
-            style={[styles.statPill, { backgroundColor: glass }]}
-            onPress={() => router.push("/(tabs)/receipts")}
-            activeOpacity={0.8}
-          >
-            <Receipt size={20} color={IOS_BLUE} />
-            <Text style={[styles.statValue, { color: textPrimary }]}>{recentTxs.length > 0 ? recentTxs.length : "—"}</Text>
-            <Text style={[styles.statLabel, { color: textSecondary }]}>Recent</Text>
+          <TouchableOpacity style={styles.statPillTouchable} onPress={() => router.push("/(tabs)/receipts")} activeOpacity={0.85}>
+            <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.statPillGlass]} intensity={48}>
+              <View style={styles.statPillInner}>
+                <Receipt size={20} color={IOS_BLUE} />
+                <Text style={[styles.statValue, { color: textPrimary }]}>{recentTxs.length > 0 ? recentTxs.length : "—"}</Text>
+                <Text style={[styles.statLabel, { color: textSecondary }]}>Recent</Text>
+              </View>
+            </GlassSurface>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.statPill, { backgroundColor: glass }]}
-            onPress={() => router.push("/(tabs)/stores")}
-            activeOpacity={0.8}
-          >
-            <ShoppingBag size={20} color={IOS_BLUE} />
-            <Text style={[styles.statValue, { color: textPrimary }]}>{storeCount}</Text>
-            <Text style={[styles.statLabel, { color: textSecondary }]}>Stores</Text>
+          <TouchableOpacity style={styles.statPillTouchable} onPress={() => router.push("/(tabs)/stores")} activeOpacity={0.85}>
+            <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.statPillGlass]} intensity={48}>
+              <View style={styles.statPillInner}>
+                <ShoppingBag size={20} color={IOS_BLUE} />
+                <Text style={[styles.statValue, { color: textPrimary }]}>{storeCount}</Text>
+                <Text style={[styles.statLabel, { color: textSecondary }]}>Stores</Text>
+              </View>
+            </GlassSurface>
           </TouchableOpacity>
         </View>
 
         <View style={styles.categoriesSection}>
           <Text style={[styles.sectionTitle, { color: textPrimary }]}>Categories</Text>
-          <View style={[styles.categoryBarsCard, { backgroundColor: glass }]}>
-            {categories.length === 0 ? (
-              <Text style={[styles.categoryBarEmpty, { color: textSecondary }]}>No data</Text>
-            ) : (
-              categories.map((c) => (
-                <CategoryBarRow
-                  key={c.name}
-                  name={c.name}
-                  amount={c.amount}
-                  progress={c.progress}
-                  textPrimary={textPrimary}
-                />
-              ))
-            )}
-          </View>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.categoryBarsCard]}>
+            <View style={styles.categoryBarsInner}>
+              {categories.length === 0 ? (
+                <Text style={[styles.categoryBarEmpty, { color: textSecondary }]}>No data</Text>
+              ) : (
+                categories.map((c) => (
+                  <CategoryBarRow
+                    key={c.name}
+                    name={c.name}
+                    amount={c.amount}
+                    progress={c.progress}
+                    textPrimary={textPrimary}
+                  />
+                ))
+              )}
+            </View>
+          </GlassSurface>
         </View>
 
         <View style={styles.recentSection}>
@@ -216,9 +227,9 @@ export default function DashboardScreen() {
               <ChevronRight size={18} color={IOS_BLUE} />
             </TouchableOpacity>
           </View>
-          <View style={[styles.txCard, { backgroundColor: glass }, SHADOW.card]}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.txCard]}>
             {recentTxs.length === 0 ? (
-              <Text style={[styles.categoryBarEmpty, { color: textSecondary }]}>No data</Text>
+              <Text style={[styles.categoryBarEmpty, { color: textSecondary, padding: SPACING.cardPadding }]}>No data</Text>
             ) : (
               recentTxs.map((tx) => (
                 <TouchableOpacity
@@ -240,7 +251,7 @@ export default function DashboardScreen() {
                 </TouchableOpacity>
               ))
             )}
-          </View>
+          </GlassSurface>
         </View>
 
         <TouchableOpacity
@@ -269,7 +280,7 @@ export default function DashboardScreen() {
           activeOpacity={1}
           onPress={() => setShowTotalSpentModal(false)}
         >
-          <View style={[styles.modalCard, { backgroundColor: glass }]}>
+          <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.modalCard]}>
             <Text style={[styles.modalTitle, { color: textPrimary }]}>Top categories</Text>
             {categories.length === 0 ? (
               <Text style={[styles.categoryBarEmpty, { color: textSecondary }]}>No data</Text>
@@ -284,7 +295,7 @@ export default function DashboardScreen() {
             <TouchableOpacity style={styles.modalClose} onPress={() => setShowTotalSpentModal(false)}>
               <Text style={[styles.modalCloseText, { color: IOS_BLUE }]}>Done</Text>
             </TouchableOpacity>
-          </View>
+          </GlassSurface>
         </TouchableOpacity>
       </Modal>
     </View>
@@ -311,12 +322,14 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 20,
   },
-  insightCard: {
+  insightCardOuter: {
     marginHorizontal: SPACING.pageHorizontal,
     marginBottom: 16,
-    borderRadius: RADIUS.card,
+  },
+  insightCardInner: {
     padding: 16,
     borderWidth: 1,
+    borderRadius: RADIUS.card,
   },
   insightHeader: {
     flexDirection: "row",
@@ -330,10 +343,9 @@ const styles = StyleSheet.create({
   insightMeta: { fontSize: 12, marginTop: 8 },
   heroCard: {
     marginHorizontal: SPACING.pageHorizontal,
-    borderRadius: RADIUS.card,
+  },
+  heroCardInner: {
     padding: 24,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.3)",
   },
   heroValue: { fontSize: 32, fontWeight: "800" },
   heroLabel: { fontSize: 14, marginTop: 4 },
@@ -343,23 +355,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.pageHorizontal,
     marginTop: 16,
   },
-  statPill: {
-    flex: 1,
-    borderRadius: RADIUS.card,
+  statPillTouchable: { flex: 1 },
+  statPillGlass: { flex: 1 },
+  statPillInner: {
     padding: SPACING.cardPadding,
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.2)",
   },
   statValue: { fontSize: 20, fontWeight: "700", marginTop: 6 },
   statLabel: { fontSize: 12, marginTop: 2 },
   categoriesSection: { paddingHorizontal: SPACING.pageHorizontal, marginTop: SPACING.sectionGap },
   sectionTitle: { fontSize: 18, fontWeight: "600", marginBottom: 10 },
-  categoryBarsCard: {
-    borderRadius: RADIUS.card,
+  categoryBarsCard: {},
+  categoryBarsInner: {
     padding: SPACING.cardPadding,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.2)",
   },
   categoryBarRow: { marginBottom: 12 },
   categoryBarHeader: {
@@ -389,10 +397,7 @@ const styles = StyleSheet.create({
   seeAll: { flexDirection: "row", alignItems: "center" },
   seeAllText: { fontSize: 14, fontWeight: "600", color: IOS_BLUE, marginRight: 2 },
   txCard: {
-    borderRadius: RADIUS.card,
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.2)",
   },
   txRow: {
     flexDirection: "row",
@@ -435,10 +440,7 @@ const styles = StyleSheet.create({
   modalCard: {
     width: "100%",
     maxWidth: 340,
-    borderRadius: RADIUS.card,
     padding: 24,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.3)",
   },
   modalTitle: { fontSize: 18, fontWeight: "700", marginBottom: 16 },
   modalRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 8 },
