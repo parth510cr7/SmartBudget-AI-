@@ -24,6 +24,17 @@ export function cleanAnswer(s: string): string {
   return collapsed.length > 1800 ? `${collapsed.slice(0, 1800).trim()}…` : collapsed;
 }
 
+/** Short, user-safe copy for chat/stats failures (avoid raw fetch URLs in UI). */
+export function friendlyChatError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (/Cannot reach backend|failed to fetch|network|Network request failed|cleartext|unable to resolve|load failed/i.test(msg)) {
+    return "Can't connect to the server. Check your connection and API settings, then try again.";
+  }
+  if (/401|Unauthorized|sign in/i.test(msg)) return "Please sign in again.";
+  if (/403|Forbidden/i.test(msg)) return "You don't have permission to do that.";
+  return "Something went wrong. Please try again.";
+}
+
 export function splitBasketItemsFromFreeText(s: string): string[] {
   const raw = (s || "").trim();
   if (!raw) return [];

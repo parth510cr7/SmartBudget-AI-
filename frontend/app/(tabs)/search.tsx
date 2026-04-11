@@ -31,6 +31,7 @@ import {
   type ChatEngine,
   buildBasketFinalizeMessage,
   cleanAnswer,
+  friendlyChatError,
   fmtMoney,
   looksLikeBasketList,
   mergeBasketItems,
@@ -76,7 +77,7 @@ export default function SearchScreen() {
       .then((d) => setSearchStats(d))
       .catch((e) => {
         setSearchStats(null);
-        setSearchStatsError(e instanceof Error ? e.message : "Failed to load stats");
+        setSearchStatsError(friendlyChatError(e));
       })
       .finally(() => setSearchStatsLoading(false));
   }, [authToken]);
@@ -159,12 +160,12 @@ export default function SearchScreen() {
       const res = await getBasketInsights(authToken ?? null, { itemNames: basket });
       appendMessage({
         role: "assistant",
-        text: buildBasketFinalizeMessage(res),
+        text: cleanAnswer(buildBasketFinalizeMessage(res)),
       });
     } catch (e) {
       appendMessage({
         role: "assistant",
-        text: e instanceof Error ? e.message : "Finalize failed",
+        text: friendlyChatError(e),
         meta: { kind: "error" },
       });
     } finally {
@@ -219,7 +220,7 @@ export default function SearchScreen() {
       } catch (e) {
         appendMessage({
           role: "assistant",
-          text: e instanceof Error ? e.message : "Something went wrong.",
+          text: friendlyChatError(e),
           meta: { kind: "error" },
         });
       } finally {
