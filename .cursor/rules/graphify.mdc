@@ -1,0 +1,11 @@
+---
+description: graphify knowledge graph context (SmartBudgetAI)
+alwaysApply: true
+---
+
+This project uses [graphify](https://github.com/safishamsi/graphify). When `graphify-out/` exists, treat it as the **map** of the repo.
+
+- **Before** broad architecture or “where does X connect to Y?” questions, read **`graphify-out/GRAPH_REPORT.md`** for god nodes, communities, and structure. Prefer that over scanning entire trees or huge greps.
+- If **`graphify-out/wiki/index.md`** exists, use it as a navigation index before reading raw files.
+- **Scope:** App code lives under **`frontend/`** (Expo) and **`backend/`** (Express + Prisma). Use the graph + targeted file reads, not whole-folder dumps.
+- **Refresh:** After large refactors, run **`/graphify .`** from the repo root in Cursor so `graphify-out/` stays current. Details: `docs/dev/graphify.md`.

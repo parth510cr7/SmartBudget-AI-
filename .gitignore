@@ -10,8 +10,14 @@ node_modules/
 dist/
 .expo/
 *.log
-.cursor/
+# Cursor: ignore local IDE state but commit shared graphify rule
+.cursor/*
+!.cursor/rules/
+.cursor/rules/*
+!.cursor/rules/graphify.mdc
 .agents/
+# graphify outputs (regenerate locally; see docs/dev/graphify.md)
+graphify-out/
 agent-transcripts/
 frontend/dist-export-test/
 frontend/.expo-export-*/

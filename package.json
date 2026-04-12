@@ -6,6 +6,8 @@
     "verify": "node scripts/verify-dev-tooling.mjs",
     "qa:smoke": "node scripts/qa-smoke.mjs",
     "qa:backend:test": "npm --prefix backend test",
-    "qa:loop": "powershell -ExecutionPolicy Bypass -File scripts/qa-loop.ps1"
+    "qa:loop": "powershell -ExecutionPolicy Bypass -File scripts/qa-loop.ps1",
+    "graphify:cursor-rule": "python -m graphify cursor install",
+    "graphify:query": "python -m graphify query"
   }
 }

@@ -61,5 +61,14 @@ if (!existsSync(dbScript)) {
   }
 }
 
+console.log("[4] graphify (optional — knowledge graph for faster navigation in Cursor)");
+const gf = sh("python", ["-m", "graphify", "--help"]);
+if (gf.code === 0) {
+  console.log("  STATUS: OK — run `/graphify .` in Cursor to build graphify-out/ (see docs/dev/graphify.md)\n");
+} else {
+  console.log("  STATUS: not installed (optional)");
+  console.log("  INSTALL: pip install graphifyy && npm run graphify:cursor-rule\n");
+}
+
 console.log("=== End (exit " + exitCode + ") ===");
 process.exit(exitCode);

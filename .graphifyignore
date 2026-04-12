@@ -1,0 +1,17 @@
+# graphify corpus exclusions (same syntax as .gitignore; paths relative to graphify root)
+# Keeps graphs smaller and AST passes faster — less noise for agents reading GRAPH_REPORT.md
+
+node_modules/
+**/node_modules/
+dist/
+build/
+.expo/
+frontend/.expo-export-*/
+**/.expo-export-*/
+.next/
+coverage/
+.git/
+agent-transcripts/
+tools/metagpt/.venv*/
+*.hbc
+*.map

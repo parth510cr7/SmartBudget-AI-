@@ -1,0 +1,3 @@
+# Optional dev tooling (not required for app runtime)
+# graphify: pip install -r requirements-dev.txt
+graphifyy>=0.4.7
