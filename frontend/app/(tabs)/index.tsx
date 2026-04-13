@@ -60,6 +60,8 @@ export default function DashboardScreen() {
     totalSpent: number;
     totalStores: number;
     categories: SummaryCategory[];
+    needsReviewCount?: number;
+    verifiedReceiptCount?: number;
   } | null>(null);
   const [recentTxs, setRecentTxs] = useState<RecentTx[]>([]);
   const [storeCount, setStoreCount] = useState(0);
@@ -72,7 +74,7 @@ export default function DashboardScreen() {
         useStore.getState().updateProfile(data.displayName ?? undefined, data.avatarUrl ?? undefined);
       }
     } catch {
-      setSummary({ totalSpent: 0, totalStores: 0, categories: [] });
+      setSummary({ totalSpent: 0, totalStores: 0, categories: [], needsReviewCount: 0, verifiedReceiptCount: 0 });
     }
   }, [authToken]);
 
@@ -112,6 +114,7 @@ export default function DashboardScreen() {
   const totalSpent = summary?.totalSpent ?? 0;
   const totalStores = summary?.totalStores ?? 0;
   const categories = summary?.categories ?? [];
+  const needsReviewCount = summary?.needsReviewCount ?? 0;
 
   return (
     <View style={[styles.container, { backgroundColor: bg }]}>
@@ -164,6 +167,32 @@ export default function DashboardScreen() {
           </GlassSurface>
         ) : null}
 
+        {needsReviewCount > 0 ? (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => router.push("/modal/library?filter=needs_review")}
+            accessibilityRole="button"
+            accessibilityLabel={`${needsReviewCount} receipts need review before they count toward totals. Open library.`}
+          >
+            <GlassSurface
+              isDark={isDarkMode}
+              borderRadius={RADIUS.card}
+              style={[LIQUID.shadow, styles.reviewBanner]}
+              intensity={48}
+            >
+              <View style={styles.reviewBannerInner}>
+                <Text style={[styles.reviewBannerTitle, { color: textPrimary }]}>
+                  {needsReviewCount} receipt{needsReviewCount === 1 ? "" : "s"} not in this total
+                </Text>
+                <Text style={[styles.reviewBannerSub, { color: textSecondary }]}>
+                  Review in Library to include them in your spending.
+                </Text>
+                <Text style={[styles.reviewBannerCta, { color: IOS_BLUE }]}>Open Library</Text>
+              </View>
+            </GlassSurface>
+          </TouchableOpacity>
+        ) : null}
+
         {/* Single hero: Total spent this period */}
         <TouchableOpacity activeOpacity={0.85} onPress={() => setShowTotalSpentModal(true)}>
           <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.heroCard]} intensity={52}>
@@ -172,6 +201,9 @@ export default function DashboardScreen() {
                 {summary == null ? "$0.00" : `$${totalSpent.toFixed(2)}`}
               </Text>
               <Text style={[styles.heroLabel, { color: textSecondary }]}>Total spent</Text>
+              <Text style={[styles.heroScope, { color: textSecondary }]}>
+                Includes only verified receipts
+              </Text>
             </View>
           </GlassSurface>
         </TouchableOpacity>
@@ -282,6 +314,9 @@ export default function DashboardScreen() {
         >
           <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.modalCard]}>
             <Text style={[styles.modalTitle, { color: textPrimary }]}>Top categories</Text>
+            <Text style={[styles.modalScope, { color: textSecondary }]}>
+              Based on verified receipts only.
+            </Text>
             {categories.length === 0 ? (
               <Text style={[styles.categoryBarEmpty, { color: textSecondary }]}>No data</Text>
             ) : (
@@ -341,6 +376,14 @@ const styles = StyleSheet.create({
   insightHeadline: { fontSize: 17, fontWeight: "700", marginBottom: 6 },
   insightSub: { fontSize: 14, lineHeight: 20 },
   insightMeta: { fontSize: 12, marginTop: 8 },
+  reviewBanner: {
+    marginHorizontal: SPACING.pageHorizontal,
+    marginBottom: 12,
+  },
+  reviewBannerInner: { padding: 16 },
+  reviewBannerTitle: { fontSize: 16, fontWeight: "700" },
+  reviewBannerSub: { fontSize: 14, marginTop: 6, lineHeight: 20 },
+  reviewBannerCta: { fontSize: 15, fontWeight: "600", marginTop: 10 },
   heroCard: {
     marginHorizontal: SPACING.pageHorizontal,
   },
@@ -349,6 +392,7 @@ const styles = StyleSheet.create({
   },
   heroValue: { fontSize: 32, fontWeight: "800" },
   heroLabel: { fontSize: 14, marginTop: 4 },
+  heroScope: { fontSize: 13, marginTop: 8, lineHeight: 18 },
   statRow: {
     flexDirection: "row",
     gap: 12,
@@ -442,7 +486,8 @@ const styles = StyleSheet.create({
     maxWidth: 340,
     padding: 24,
   },
-  modalTitle: { fontSize: 18, fontWeight: "700", marginBottom: 16 },
+  modalTitle: { fontSize: 18, fontWeight: "700", marginBottom: 8 },
+  modalScope: { fontSize: 13, marginBottom: 12, lineHeight: 18 },
   modalRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 8 },
   modalCat: { fontSize: 16, fontWeight: "500" },
   modalAmt: { fontSize: 16, fontWeight: "700" },

@@ -21,6 +21,46 @@ export interface DownloadState {
   error: string | null;
 }
 
+export type FileSystemDiagnostics = {
+  documentDirectory: string | null;
+  cacheDirectory: string | null;
+  expoNativeModule: "present" | "missing" | "unknown";
+  requireNativeModuleOk: boolean;
+  requireNativeModuleError?: string;
+};
+
+export async function diagnoseFileSystem(): Promise<FileSystemDiagnostics> {
+  const fs = FileSystem as unknown as { documentDirectory?: string | null; cacheDirectory?: string | null };
+  const documentDirectory = fs.documentDirectory ?? null;
+  const cacheDirectory = fs.cacheDirectory ?? null;
+
+  let expoNativeModule: FileSystemDiagnostics["expoNativeModule"] = "unknown";
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const RN = require("react-native") as { NativeModules?: Record<string, unknown> };
+    const native = RN.NativeModules?.ExpoFileSystem ?? null;
+    expoNativeModule = native ? "present" : "missing";
+  } catch {
+    expoNativeModule = "unknown";
+  }
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { requireNativeModule } = require("expo-modules-core") as { requireNativeModule: (n: string) => unknown };
+    requireNativeModule("ExpoFileSystem");
+    return { documentDirectory, cacheDirectory, expoNativeModule, requireNativeModuleOk: true };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      documentDirectory,
+      cacheDirectory,
+      expoNativeModule,
+      requireNativeModuleOk: false,
+      requireNativeModuleError: msg,
+    };
+  }
+}
+
 /**
  * Get a writable directory for the model (documentDirectory, or cacheDirectory as fallback).
  * Retries a few times in case the native module is not ready yet.
@@ -29,16 +69,37 @@ async function getModelDirectoryAsync(): Promise<string> {
   if (Platform.OS === "web") {
     throw new Error("On-device AI model download is not supported on web. Use the iOS/Android dev build app.");
   }
-  const maxAttempts = 3;
-  const delayMs = 400;
+  const maxAttempts = 10;
+  let delayMs = 250;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const fs = FileSystem as unknown as { documentDirectory?: string | null; cacheDirectory?: string | null };
+    // Some iOS/dev-client launches can report null dirs briefly; calling into the module helps “wake” it.
+    try {
+      const probe =
+        fs.cacheDirectory ??
+        fs.documentDirectory ??
+        // `file://` is a safe-ish sentinel to force native module init; it may error on getInfoAsync, which we ignore.
+        "file://";
+      await FileSystem.getInfoAsync(probe);
+    } catch {
+      // ignore
+    }
+
     const dir = fs.documentDirectory ?? fs.cacheDirectory;
-    if (dir && dir.trim()) return dir.replace(/\/*$/, "").replace(/\/$/, "") || dir.trim();
-    if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, delayMs));
+    if (dir && dir.trim()) return dir.replace(/\/+$/, "").trim() || dir.trim();
+
+    if (attempt < maxAttempts) {
+      await new Promise((r) => setTimeout(r, delayMs));
+      delayMs = Math.min(1200, Math.round(delayMs * 1.6));
+    }
   }
+
   throw new Error(
-    "Storage not available (expo-file-system returned no document/cache directory). Restart the app and try again."
+    [
+      "Storage not available (expo-file-system returned no document/cache directory).",
+      "This usually means the dev build is missing `expo-file-system`, or the app needs a full cold restart.",
+      "Try: fully quit the app (swipe away) and reopen. If it persists, rebuild the dev client.",
+    ].join(" ")
   );
 }
 
@@ -50,7 +111,7 @@ function getModelDirectorySync(): string {
   const dir = fs.documentDirectory ?? fs.cacheDirectory;
   if (!dir || !dir.trim())
     throw new Error(
-      "Storage not available (expo-file-system returned no document/cache directory). Restart the app and try again."
+      "Storage not available (expo-file-system returned no document/cache directory). Fully quit the app and reopen; if it persists, rebuild the dev client."
     );
   return dir.replace(/\/*$/, "").trim() || dir.trim();
 }

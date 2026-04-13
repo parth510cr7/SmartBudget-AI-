@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   Modal,
   TextInput,
 } from "react-native";
-import { useRouter, useFocusEffect } from "expo-router";
+import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { X, Trash2, Users, Check, Circle, ArrowLeft, CheckCircle } from "lucide-react-native";
 import {
   getReceipts,
@@ -162,8 +162,12 @@ const libraryStyles = StyleSheet.create({
   },
 });
 
+type LibraryFilter = "all" | "needs_review";
+
 export default function LibraryModal() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ filter?: string | string[] }>();
+  const filterParam = Array.isArray(params.filter) ? params.filter[0] : params.filter;
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
   const { bg, textPrimary, textSecondary } = getTheme(isDarkMode);
   const authToken = useStore((s) => (s.user as { idToken?: string } | null)?.idToken ?? null);
@@ -190,6 +194,25 @@ export default function LibraryModal() {
   const [dateEditSaving, setDateEditSaving] = useState(false);
   const [householdReceipts, setHouseholdReceipts] = useState<HouseholdReceiptRow[]>([]);
   const [householdReceiptsLoading, setHouseholdReceiptsLoading] = useState(false);
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
+
+  useEffect(() => {
+    setLibraryFilter(filterParam === "needs_review" ? "needs_review" : "all");
+  }, [filterParam]);
+
+  const displayedReceipts = useMemo(() => {
+    if (libraryFilter === "needs_review") {
+      return receipts.filter((r) => r.status === "NEEDS_REVIEW");
+    }
+    return receipts;
+  }, [receipts, libraryFilter]);
+
+  const displayedHouseholdReceipts = useMemo(() => {
+    if (libraryFilter === "needs_review") {
+      return householdReceipts.filter((r) => r.status === "NEEDS_REVIEW");
+    }
+    return householdReceipts;
+  }, [householdReceipts, libraryFilter]);
 
   const refresh = useCallback(
     (search?: string) => {
@@ -321,6 +344,37 @@ export default function LibraryModal() {
         </TouchableOpacity>
       </View>
 
+      <View style={styles.filterRow}>
+        {(["all", "needs_review"] as const).map((key) => {
+          const active = libraryFilter === key;
+          return (
+            <TouchableOpacity
+              key={key}
+              onPress={() => setLibraryFilter(key)}
+              style={[
+                styles.filterChip,
+                {
+                  backgroundColor: active ? IOS_BLUE : isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
+                  borderColor: active ? IOS_BLUE : "transparent",
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={key === "all" ? "Show all receipts" : "Show receipts that need review"}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  { color: active ? "#FFF" : textPrimary },
+                ]}
+              >
+                {key === "all" ? "All" : "Needs review"}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
       <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.button} style={[LIQUID.shadow, styles.searchRow]}>
         <View style={styles.searchRowInner}>
           <TextInput
@@ -352,7 +406,16 @@ export default function LibraryModal() {
           contentContainerStyle={styles.grid}
           showsVerticalScrollIndicator={false}
         >
-          {receipts.map((r) => {
+          {libraryFilter === "needs_review" &&
+          displayedReceipts.length === 0 &&
+          displayedHouseholdReceipts.length === 0 ? (
+            <View style={[styles.centered, { width: "100%", paddingVertical: 24 }]}>
+              <Text style={[styles.errorText, { color: textSecondary, textAlign: "center" }]}>
+                No receipts need review right now. Everything verified is already included in your totals.
+              </Text>
+            </View>
+          ) : null}
+          {displayedReceipts.map((r) => {
             if (!r || typeof r.id !== "string") return null;
             const total = typeof r.total === "number" && Number.isFinite(r.total) ? r.total : 0;
             const storeName = r.store?.name ?? "Store";
@@ -395,13 +458,13 @@ export default function LibraryModal() {
             </GlassSurface>
           );
           })}
-          {householdReceipts.length > 0 && (
+          {displayedHouseholdReceipts.length > 0 && (
             <>
               <View style={[styles.sectionHeaderWrap, { width: "100%" }]}>
                 <Text style={[styles.sectionHeaderTitle, { color: textPrimary }]}>Household receipts</Text>
                 <Text style={[styles.sectionHeaderSub, { color: textSecondary }]}>Shared with your household</Text>
               </View>
-              {householdReceipts.map((r) => {
+              {displayedHouseholdReceipts.map((r) => {
                 const total = typeof r.total === "number" && Number.isFinite(r.total) ? r.total : 0;
                 const storeName = r.store?.name ?? "Store";
                 const asDetail: ReceiptWithStore = {
@@ -876,6 +939,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  filterRow: {
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: 20,
+    marginBottom: 10,
+  },
+  filterChip: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    minHeight: 44,
+    justifyContent: "center",
+  },
+  filterChipText: { fontSize: 15, fontWeight: "700" },
   searchRow: {
     marginHorizontal: 20,
     marginBottom: 8,

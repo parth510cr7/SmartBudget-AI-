@@ -34,15 +34,10 @@ import {
   Plus,
   X,
   Store,
-  Tag,
-  CalendarDays,
-  Users,
-  AlertCircle,
-  TrendingUp,
-  Lightbulb,
-  Scale,
-  HelpCircle,
   PieChart,
+  TrendingUp,
+  Tag,
+  AlertCircle,
   Copy,
   RefreshCw,
 } from "lucide-react-native";
@@ -56,7 +51,6 @@ import {
   buildBasketFinalizeMessage,
   cleanAnswer,
   friendlyChatError,
-  fmtMoney,
   looksLikeBasketList,
   mergeBasketItems,
   newMessageId,
@@ -69,37 +63,19 @@ import {
   saveSearchChatState,
   saveSearchLeavePreference,
   type SearchChatLeaveBehavior,
-  type SearchScreenMode,
 } from "../../src/features/search/searchStorage";
-import { storeChartColor, storeInitials } from "../../src/features/search/searchUiHelpers";
 
-const SECTION_GAP = 24;
 const CARD_PADDING = 18;
 const BUBBLE_GAP = 12;
-/** Extra space below Insights content so the floating tab bar does not cover the Summary card. */
-const INSIGHTS_SCROLL_BOTTOM_EXTRA = 56;
-
-type InsightsDetailTab = "categories" | "stores" | "visits";
 
 type QuickChip = { label: string; text: string; Icon: ComponentType<LucideProps> };
 
-function emptyStats(): Pick<
-  SearchStatsResponse,
-  "topCategories" | "topStoresBySpend" | "topStoresByVisits"
-> {
-  return { topCategories: [], topStoresBySpend: [], topStoresByVisits: [] };
-}
-
-export default function SearchScreen() {
+export default function AssistantScreen() {
   const router = useRouter();
   const authToken = useStore((s) => (s.user as { idToken?: string } | null)?.idToken ?? null);
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
   const { bg, textPrimary, textSecondary } = getTheme(isDarkMode);
   const insets = useSafeAreaInsets();
-
-  useEffect(() => {
-    router.replace("/(tabs)/assistant");
-  }, [router]);
 
   const basket = useStore((s) => s.basket ?? []);
   const setBasket = useStore((s) => s.setBasket);
@@ -114,6 +90,7 @@ export default function SearchScreen() {
   const [running, setRunning] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   messagesRef.current = messages;
+
   const [searchStats, setSearchStats] = useState<SearchStatsResponse | null>(null);
   const [searchStatsLoading, setSearchStatsLoading] = useState(false);
   const [searchStatsError, setSearchStatsError] = useState<string | null>(null);
@@ -124,23 +101,8 @@ export default function SearchScreen() {
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [composerInputHeight, setComposerInputHeight] = useState(22);
   const [searchHydrated, setSearchHydrated] = useState(false);
-  const [searchMode, setSearchMode] = useState<SearchScreenMode>("chat");
-  const [leaveBehavior, setLeaveBehavior] = useState<SearchChatLeaveBehavior>("persist");
-  const [insightsDetailTab, setInsightsDetailTab] = useState<InsightsDetailTab>("categories");
   const [expandedAssistantIds, setExpandedAssistantIds] = useState<Record<string, boolean>>({});
-
-  const statsSafe = useMemo(() => {
-    if (!searchStats) return { ...emptyStats(), last30Days: { totalSpend: 0, avgPerDay: 0 } };
-    return {
-      topCategories: searchStats.topCategories ?? [],
-      topStoresBySpend: searchStats.topStoresBySpend ?? [],
-      topStoresByVisits: searchStats.topStoresByVisits ?? [],
-      last30Days: searchStats.last30Days,
-      community: searchStats.community,
-      mostVisitedStore: searchStats.mostVisitedStore,
-      topCategory: searchStats.topCategory,
-    };
-  }, [searchStats]);
+  const [leaveBehavior, setLeaveBehavior] = useState<SearchChatLeaveBehavior>("persist");
 
   const loadSearchStats = useCallback(() => {
     setSearchStatsError(null);
@@ -160,7 +122,6 @@ export default function SearchScreen() {
       return () => {
         if (leaveBehaviorRef.current === "clear_on_leave") {
           setMessages([]);
-          setSearchMode("chat");
           setExpandedAssistantIds({});
           void clearSearchChatStorage();
         }
@@ -188,12 +149,6 @@ export default function SearchScreen() {
         return;
       }
       setMessages(s.messages);
-      const loadedMode = s.searchMode === "chat" ? "chat" : "insights";
-      if (s.messages.length === 0) {
-        setSearchMode("chat");
-      } else {
-        setSearchMode(loadedMode);
-      }
       setSearchHydrated(true);
     });
     return () => {
@@ -203,8 +158,8 @@ export default function SearchScreen() {
 
   useEffect(() => {
     if (!searchHydrated) return;
-    void saveSearchChatState({ messages, searchMode });
-  }, [messages, searchMode, searchHydrated]);
+    void saveSearchChatState({ messages, searchMode: "chat" });
+  }, [messages, searchHydrated]);
 
   const appendMessage = useCallback((m: Omit<ChatMessage, "id" | "createdAt">) => {
     setMessages((prev) => [...prev, { ...m, id: newMessageId(m.role), createdAt: Date.now() }]);
@@ -225,7 +180,7 @@ export default function SearchScreen() {
     const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
     const showSub = Keyboard.addListener(showEvent, () => {
       setKeyboardOpen(true);
-      if (searchMode === "chat" && messages.length > 0) {
+      if (messages.length > 0) {
         shouldAutoScrollRef.current = true;
         scrollToBottomSoon();
       }
@@ -237,21 +192,20 @@ export default function SearchScreen() {
       showSub.remove();
       hideSub.remove();
     };
-  }, [messages.length, scrollToBottomSoon, searchMode]);
+  }, [messages.length, scrollToBottomSoon]);
 
   useEffect(() => {
-    if (running && searchMode === "chat") {
+    if (running) {
       shouldAutoScrollRef.current = true;
       scrollToBottomSoon();
     }
-  }, [running, searchMode, scrollToBottomSoon]);
+  }, [running, scrollToBottomSoon]);
 
   const finalizeBasket = useCallback(async () => {
     if (basket.length === 0) {
       Alert.alert("Basket is empty", "Add a few items first.");
       return;
     }
-    setSearchMode("chat");
     setInsightsLoading(true);
     try {
       const res = await getBasketInsights(authToken ?? null, { itemNames: basket });
@@ -277,7 +231,6 @@ export default function SearchScreen() {
       if (!trimmed) return;
       if (!searchHydrated) return;
 
-      setSearchMode("chat");
       shouldAutoScrollRef.current = true;
       appendMessage({ role: "user", text: trimmed });
       setComposer("");
@@ -366,57 +319,23 @@ export default function SearchScreen() {
     }
   }, []);
 
+  /** Phrases aligned with backend `detectIntent` in appQueryService (VERIFIED receipts only). */
   const quickPrompts = useMemo((): QuickChip[] => {
-    const chips: QuickChip[] = [
-      {
-        label: "Spending shift",
-        text: "What changed the most in my spending recently compared to before?",
-        Icon: TrendingUp,
-      },
-      {
-        label: "Save money",
-        text: "Which category should I focus on first to save money, based on my receipts?",
-        Icon: Lightbulb,
-      },
-      {
-        label: "Store compare",
-        text: "Compare my top two stores by spend — where might I get better value?",
-        Icon: Scale,
-      },
-      {
-        label: "Habit check",
-        text: "Do my shopping patterns suggest any habits I should be aware of?",
-        Icon: HelpCircle,
-      },
+    return [
+      { label: "Overview", text: "Summarize my spending overview.", Icon: PieChart },
+      { label: "By store", text: "Show my spend by store.", Icon: Store },
+      { label: "By category", text: "Show my spend by category.", Icon: Tag },
+      { label: "Top category", text: "What is my top category?", Icon: TrendingUp },
+      { label: "Recent buys", text: "What were my recent purchases?", Icon: ShoppingBasket },
     ];
-    if (searchStats?.mostVisitedStore?.name) {
-      const n = searchStats.mostVisitedStore.name;
-      chips.push({
-        label: "Why this store?",
-        text: `I shop at ${n} often — what does my data say about spend versus visits there?`,
-        Icon: Store,
-      });
-    }
-    if (searchStats?.topCategory?.name) {
-      const c = searchStats.topCategory.name;
-      chips.push({
-        label: `${c} patterns`,
-        text: `Any unusual patterns or spikes in my ${c} spending?`,
-        Icon: PieChart,
-      });
-    }
-    chips.push({
-      label: "Cheaper week",
-      text: "Suggest a cheaper grocery week based on what I usually buy (high level).",
-      Icon: ShoppingBasket,
-    });
-    return chips.slice(0, 6);
-  }, [searchStats]);
+  }, []);
+
+  const dataChipsDisabled =
+    !searchStatsLoading && searchStats != null && (searchStats.verifiedReceiptCount ?? 0) === 0;
 
   const onQuickAction = useCallback(
     (text: string) => {
       if (!searchHydrated) return;
-      setSearchMode("chat");
       void send(text);
     },
     [searchHydrated, send]
@@ -433,8 +352,8 @@ export default function SearchScreen() {
           style: "destructive",
           onPress: () => {
             setMessages([]);
-            setSearchMode("chat");
             setExpandedAssistantIds({});
+            void clearSearchChatStorage();
             requestAnimationFrame(() => {
               try {
                 listRef.current?.scrollToOffset({ offset: 0, animated: true });
@@ -455,16 +374,15 @@ export default function SearchScreen() {
   const [composerRowHeight, setComposerRowHeight] = useState(52);
 
   const hasChatMessages = messages.length > 0;
-  const isChatMode = searchMode === "chat";
 
   const keyboardVerticalOffset = useMemo(() => {
     if (Platform.OS === "android") return 0;
     const headerPaddingTop = insets.top + 12;
     const titleRow = 44;
-    const leavePrefRow = isChatMode ? 44 : 0;
+    const leavePrefRow = 44;
     const headerPaddingBottom = 8;
     return headerPaddingTop + titleRow + leavePrefRow + headerPaddingBottom;
-  }, [insets.top, isChatMode]);
+  }, [insets.top]);
 
   const listContentPaddingBottom = useMemo(() => {
     if (!hasChatMessages) {
@@ -493,292 +411,10 @@ export default function SearchScreen() {
     setExpandedAssistantIds((prev) => ({ ...prev, [id]: !prev[id] }));
   }, []);
 
-  const heroStore = statsSafe.topStoresBySpend[0];
-  const heroInitials = heroStore ? storeInitials(heroStore.name) : "SB";
-
-  const insightBar = (
-    label: string,
-    value: number,
-    max: number,
-    barColor: string,
-    valueFormat: "money" | "count" = "money"
-  ) => {
-    const safeMax = max > 0 && Number.isFinite(max) ? max : 0;
-    const safeVal = Number.isFinite(value) ? value : 0;
-    const pct =
-      safeMax > 0 ? Math.min(100, Math.max(0, (safeVal / safeMax) * 100)) : 0;
-    const valueStr =
-      valueFormat === "money"
-        ? fmtMoney(value)
-        : `${Math.max(0, Math.round(value)).toLocaleString()}`;
-    return (
-      <View style={styles.barRowWrap}>
-        <View style={styles.barRowHeader}>
-          <Text style={[styles.barRowLabel, { color: textPrimary }]} numberOfLines={1}>
-            {label}
-          </Text>
-          <Text style={[styles.barRowValue, { color: textPrimary }]}>{valueStr}</Text>
-        </View>
-        <View style={[styles.barTrack, { backgroundColor: isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)" }]}>
-          <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: barColor }]} />
-        </View>
-      </View>
-    );
-  };
-
-  const skeletonMuted = isDarkMode ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.08)";
-
-  const openScanner = useCallback(() => {
-    router.push("/modal/scanner");
-  }, [router]);
-
-  const statLine = (icon: ReactNode, label: string, value: string) => (
-    <View style={[styles.statRow, { borderColor: "rgba(255,255,255,0.1)" }]}>
-      <View style={styles.statRowIcon}>{icon}</View>
-      <View style={{ flex: 1 }}>
-        <Text style={[styles.statLabel, { color: textSecondary }]}>{label}</Text>
-        <Text style={[styles.statValue, { color: textPrimary }]} numberOfLines={2}>
-          {value}
-        </Text>
-      </View>
-    </View>
-  );
-
-  const maxCat = Math.max(0, ...statsSafe.topCategories.map((c) => c.amount));
-  const maxSpend = Math.max(0, ...statsSafe.topStoresBySpend.map((s) => s.totalSpend));
-  const maxVisits = Math.max(0, ...statsSafe.topStoresByVisits.map((s) => s.visits));
-
-  const renderInsights = () => {
-    const emptyInsight = (message: string) => (
-      <View>
-        <Text style={{ color: textSecondary, marginBottom: 14, lineHeight: 22 }}>{message}</Text>
-        <TouchableOpacity
-          onPress={openScanner}
-          style={[styles.emptyScanBtn, { backgroundColor: IOS_BLUE }]}
-          accessibilityRole="button"
-          accessibilityLabel="Scan a receipt"
-        >
-          <Text style={styles.emptyScanBtnText}>Scan a receipt</Text>
-        </TouchableOpacity>
-      </View>
-    );
-
-    return (
-      <ScrollView
-        style={styles.modeScroll}
-        contentContainerStyle={[
-          styles.insightsScrollInner,
-          { paddingBottom: tabBarReserve + INSIGHTS_SCROLL_BOTTOM_EXTRA },
-        ]}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        {searchStatsLoading ? (
-          <View accessibilityElementsHidden={true} importantForAccessibility="no-hide-descendants">
-            <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={LIQUID.shadow}>
-              <View style={styles.heroCardInner}>
-                <View style={[styles.heroAvatar, { backgroundColor: skeletonMuted }]} />
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <View style={{ width: 88, height: 11, borderRadius: 4, backgroundColor: skeletonMuted, marginBottom: 10 }} />
-                  <View style={{ width: "78%", height: 17, borderRadius: 4, backgroundColor: skeletonMuted, marginBottom: 10 }} />
-                  <View style={{ width: 112, height: 26, borderRadius: 4, backgroundColor: skeletonMuted }} />
-                </View>
-              </View>
-            </GlassSurface>
-            <View style={{ marginTop: SECTION_GAP }}>
-              <View style={{ width: 200, height: 20, borderRadius: 4, backgroundColor: skeletonMuted, marginBottom: 12 }} />
-              <GlassSurface isDark={isDarkMode} borderRadius={16} intensity={44} style={[LIQUID.shadow, styles.segmentGlass]}>
-                <View style={[styles.segmentWrap, { paddingVertical: 8 }]}>
-                  <View style={{ flex: 1, height: 40, borderRadius: 12, backgroundColor: skeletonMuted }} />
-                  <View style={{ flex: 1, height: 40, borderRadius: 12, backgroundColor: skeletonMuted }} />
-                  <View style={{ flex: 1, height: 40, borderRadius: 12, backgroundColor: skeletonMuted }} />
-                </View>
-              </GlassSurface>
-              <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, { marginTop: 12 }]}>
-                <View style={{ padding: CARD_PADDING }}>
-                  {[0, 1, 2].map((i) => (
-                    <View key={i} style={[styles.barRowWrap, i === 2 ? { marginBottom: 0 } : undefined]}>
-                      <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
-                        <View style={{ width: "58%", height: 14, borderRadius: 4, backgroundColor: skeletonMuted }} />
-                        <View style={{ width: 52, height: 14, borderRadius: 4, backgroundColor: skeletonMuted }} />
-                      </View>
-                      <View
-                        style={{
-                          height: 8,
-                          borderRadius: 4,
-                          backgroundColor: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)",
-                        }}
-                      />
-                    </View>
-                  ))}
-                </View>
-              </GlassSurface>
-            </View>
-          </View>
-        ) : searchStatsError ? (
-          <Text style={[styles.statsError, { color: textSecondary }]}>{searchStatsError}</Text>
-        ) : (
-          <>
-            {heroStore ? (
-              <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={LIQUID.shadow}>
-                <View style={styles.heroCardInner}>
-                  <View style={[styles.heroAvatar, { backgroundColor: "rgba(10,132,255,0.22)" }]}>
-                    <Text style={[styles.heroAvatarText, { color: IOS_BLUE }]}>{heroInitials}</Text>
-                  </View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={[styles.heroEyebrow, { color: textSecondary }]}>Top spend</Text>
-                    <Text style={[styles.heroTitle, { color: textPrimary }]} numberOfLines={2}>
-                      {heroStore.name}
-                    </Text>
-                    <Text style={[styles.heroAmount, { color: textPrimary }]}>{fmtMoney(heroStore.totalSpend)}</Text>
-                  </View>
-                </View>
-              </GlassSurface>
-            ) : (
-              <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={LIQUID.shadow}>
-                <View style={{ padding: CARD_PADDING }}>
-                  {emptyInsight(
-                    "No spending highlights yet. Scan a receipt to see your top stores and categories here."
-                  )}
-                </View>
-              </GlassSurface>
-            )}
-
-            <View style={{ marginTop: SECTION_GAP }}>
-              <Text style={[styles.sectionTitle, { color: textPrimary }]}>Spending breakdown</Text>
-              <GlassSurface isDark={isDarkMode} borderRadius={16} intensity={44} style={[LIQUID.shadow, styles.segmentGlass, { marginTop: 12 }]}>
-                <View style={styles.segmentWrap} accessibilityRole="tablist" accessibilityLabel="Insight breakdown">
-                  <TouchableOpacity
-                    style={[styles.segmentBtn, insightsDetailTab === "categories" && styles.segmentBtnActive]}
-                    onPress={() => setInsightsDetailTab("categories")}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: insightsDetailTab === "categories" }}
-                    accessibilityLabel="Categories"
-                  >
-                    <Text
-                      style={[styles.segmentBtnText, { color: insightsDetailTab === "categories" ? IOS_BLUE : textSecondary }]}
-                    >
-                      Categories
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.segmentBtn, insightsDetailTab === "stores" && styles.segmentBtnActive]}
-                    onPress={() => setInsightsDetailTab("stores")}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: insightsDetailTab === "stores" }}
-                    accessibilityLabel="Stores by spend"
-                  >
-                    <Text style={[styles.segmentBtnText, { color: insightsDetailTab === "stores" ? IOS_BLUE : textSecondary }]}>
-                      Stores
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.segmentBtn, insightsDetailTab === "visits" && styles.segmentBtnActive]}
-                    onPress={() => setInsightsDetailTab("visits")}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: insightsDetailTab === "visits" }}
-                    accessibilityLabel="Store visits"
-                  >
-                    <Text style={[styles.segmentBtnText, { color: insightsDetailTab === "visits" ? IOS_BLUE : textSecondary }]}>
-                      Visits
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </GlassSurface>
-
-              <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, { marginTop: 12 }]}>
-                <View style={{ padding: CARD_PADDING }}>
-                  {insightsDetailTab === "categories" ? (
-                    statsSafe.topCategories.length === 0 ? (
-                      emptyInsight(
-                        "No category data yet. Verified receipts with line-item categories will appear here."
-                      )
-                    ) : (
-                      statsSafe.topCategories.map((c, i) => (
-                        <View key={`cat-${i}-${c.name}`}>
-                          {insightBar(
-                            c.name,
-                            c.amount,
-                            maxCat || 1,
-                            ["#34C759", "#007AFF", "#FF9500", "#AF52DE", "#FF3B30"][i % 5]
-                          )}
-                        </View>
-                      ))
-                    )
-                  ) : insightsDetailTab === "stores" ? (
-                    statsSafe.topStoresBySpend.length === 0 ? (
-                      emptyInsight("No store spend yet. Scan a receipt to build your store leaderboard.")
-                    ) : (
-                      statsSafe.topStoresBySpend.map((s, i) => (
-                        <View key={`spend-${i}-${s.name}`}>
-                          {insightBar(s.name, s.totalSpend, maxSpend || 1, storeChartColor(s.name))}
-                        </View>
-                      ))
-                    )
-                  ) : statsSafe.topStoresByVisits.length === 0 ? (
-                    emptyInsight("No visit counts yet. Scan receipts to see where you shop most often.")
-                  ) : (
-                    statsSafe.topStoresByVisits.map((s, i) => (
-                      <View key={`vis-${i}-${s.name}`}>
-                        {insightBar(s.name, s.visits, maxVisits || 1, storeChartColor(s.name), "count")}
-                      </View>
-                    ))
-                  )}
-                </View>
-              </GlassSurface>
-            </View>
-
-            <View style={{ marginTop: SECTION_GAP }}>
-              <Text style={[styles.sectionTitle, { color: textPrimary }]}>Summary</Text>
-              <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, { marginTop: 12 }]}>
-                <View style={{ padding: CARD_PADDING }}>
-                  {statLine(
-                    <CalendarDays size={18} color={IOS_BLUE} />,
-                    "Last 30 days (avg / day)",
-                    searchStats ? `${fmtMoney(searchStats.last30Days.avgPerDay)} · ${fmtMoney(searchStats.last30Days.totalSpend)} total` : "—"
-                  )}
-                  {statLine(
-                    <Users size={18} color={IOS_BLUE} />,
-                    "Community avg price (weighted)",
-                    searchStats?.community ? fmtMoney(searchStats.community.weightedAvgPrice) : "No community data yet"
-                  )}
-                  {searchStats?.mostVisitedStore ? (
-                    statLine(
-                      <Store size={18} color={IOS_BLUE} />,
-                      "Most visited store",
-                      `${searchStats.mostVisitedStore.name} · ${searchStats.mostVisitedStore.visits} visits`
-                    )
-                  ) : null}
-                  {searchStats?.topCategory ? (
-                    statLine(
-                      <Tag size={18} color={IOS_BLUE} />,
-                      "Top category",
-                      `${searchStats.topCategory.name} · ${fmtMoney(searchStats.topCategory.amount)}`
-                    )
-                  ) : null}
-                </View>
-              </GlassSurface>
-            </View>
-          </>
-        )}
-      </ScrollView>
-    );
-  };
-
   const assistantSummaryLong = (text: string) => {
     const t = cleanAnswer(text);
     return t.length > 280 || t.split("\n").length > 6;
   };
-
-  const goToInsights = useCallback(() => {
-    Keyboard.dismiss();
-    setSearchMode("insights");
-  }, []);
-
-  const goToChat = useCallback(() => {
-    Keyboard.dismiss();
-    setSearchMode("chat");
-  }, []);
 
   const renderChat = () => (
     <FlatList
@@ -846,7 +482,6 @@ export default function SearchScreen() {
         const long = assistantSummaryLong(item.text);
         const isErr = item.meta?.kind === "error";
         const isBasketCta = item.meta?.kind === "basket_cta";
-        const cardLabel = isErr ? "Couldn't complete" : isBasketCta ? "Basket" : "Answer";
         const usePlainCard = !isErr && !isBasketCta;
         const isLastAssistant = index === messages.length - 1;
         const plainBg = isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)";
@@ -858,10 +493,8 @@ export default function SearchScreen() {
             {!usePlainCard ? (
               <View style={styles.summaryCardLabelRow}>
                 {isErr ? <AlertCircle size={16} color={IOS_RED} /> : null}
-                <Text
-                  style={[styles.summaryCardLabel, { color: isErr ? IOS_RED : textSecondary, marginBottom: 0 }]}
-                >
-                  {cardLabel}
+                <Text style={[styles.summaryCardLabel, { color: isErr ? IOS_RED : textSecondary, marginBottom: 0 }]}>
+                  {isErr ? "Couldn't complete" : "Basket"}
                 </Text>
               </View>
             ) : null}
@@ -878,9 +511,7 @@ export default function SearchScreen() {
                 accessibilityLabel={expanded ? "Show less" : "Show more"}
                 style={styles.showMoreBtn}
               >
-                <Text style={[styles.showMoreText, { color: IOS_BLUE }]}>
-                  {expanded ? "Show less" : "Show more"}
-                </Text>
+                <Text style={[styles.showMoreText, { color: IOS_BLUE }]}>{expanded ? "Show less" : "Show more"}</Text>
               </TouchableOpacity>
             ) : null}
             {usePlainCard && long ? (
@@ -942,23 +573,9 @@ export default function SearchScreen() {
         return (
           <View style={[styles.msgRow, { marginTop: index === 0 ? 0 : BUBBLE_GAP, justifyContent: "flex-start" }]}>
             {usePlainCard ? (
-              <View
-                style={[
-                  styles.assistantPlainOuter,
-                  {
-                    backgroundColor: plainBg,
-                    borderColor: plainBorder,
-                  },
-                ]}
-              >
-                {body}
-              </View>
+              <View style={[styles.assistantPlainOuter, { backgroundColor: plainBg, borderColor: plainBorder }]}>{body}</View>
             ) : (
-              <GlassSurface
-                isDark={isDarkMode}
-                borderRadius={RADIUS.card}
-                style={[LIQUID.shadow, styles.summaryCardOuter, isErr ? styles.summaryCardError : null]}
-              >
+              <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.summaryCardOuter, isErr ? styles.summaryCardError : null]}>
                 <View style={{ padding: CARD_PADDING }}>{body}</View>
               </GlassSurface>
             )}
@@ -979,89 +596,50 @@ export default function SearchScreen() {
           <View style={styles.headerRow}>
             <View style={styles.headerTitleWrap}>
               <Text style={[styles.title, { color: textPrimary }]} numberOfLines={1} accessibilityRole="header">
-                {searchMode === "insights" ? "Insights" : "Assistant"}
+                Assistant
               </Text>
             </View>
             <View style={styles.headerActions}>
-              {searchMode === "insights" ? (
+              {messages.length > 0 ? (
                 <TouchableOpacity
-                  onPress={goToChat}
+                  onPress={confirmClearChat}
                   style={styles.headerTextBtn}
                   accessibilityRole="button"
-                  accessibilityLabel="Open assistant chat"
-                  hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+                  accessibilityLabel="Clear conversation"
                 >
-                  <Text style={[styles.headerActionText, { color: IOS_BLUE }]}>Chat</Text>
+                  <Text style={[styles.headerActionText, { color: IOS_BLUE }]}>Clear</Text>
                 </TouchableOpacity>
-              ) : (
-                <>
-                  <TouchableOpacity
-                    onPress={goToInsights}
-                    style={styles.headerTextBtn}
-                    accessibilityRole="button"
-                    accessibilityLabel="View spending insights"
-                    hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
-                  >
-                    <Text style={[styles.headerActionText, { color: IOS_BLUE }]}>Insights</Text>
-                  </TouchableOpacity>
-                  {messages.length > 0 ? (
-                    <TouchableOpacity
-                      onPress={confirmClearChat}
-                      style={styles.headerTextBtn}
-                      accessibilityRole="button"
-                      accessibilityLabel="Clear conversation"
-                      hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
-                    >
-                      <Text style={[styles.headerActionText, { color: IOS_BLUE }]}>Clear</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </>
-              )}
+              ) : null}
             </View>
           </View>
 
-          {isChatMode ? (
-            <View style={styles.leavePrefRow} accessibilityLabel="Chat persistence">
-              <Text style={[styles.leavePrefLabel, { color: textSecondary }]}>
-                Clear chat when leaving this tab
-              </Text>
-              <Switch
-                value={leaveBehavior === "clear_on_leave"}
-                onValueChange={(v) => {
-                  const next: SearchChatLeaveBehavior = v ? "clear_on_leave" : "persist";
-                  leaveBehaviorRef.current = next;
-                  setLeaveBehavior(next);
-                  void saveSearchLeavePreference(next);
-                }}
-                trackColor={{
-                  false: isDarkMode ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.12)",
-                  true: "rgba(10,132,255,0.4)",
-                }}
-                thumbColor={
-                  leaveBehavior === "clear_on_leave" ? IOS_BLUE : isDarkMode ? "#f2f2f7" : "#ffffff"
-                }
-                ios_backgroundColor={isDarkMode ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.12)"}
-              />
-            </View>
-          ) : null}
+          <View style={styles.leavePrefRow} accessibilityLabel="Chat persistence">
+            <Text style={[styles.leavePrefLabel, { color: textSecondary }]}>Clear chat when leaving this tab</Text>
+            <Switch
+              value={leaveBehavior === "clear_on_leave"}
+              onValueChange={(v) => {
+                const next: SearchChatLeaveBehavior = v ? "clear_on_leave" : "persist";
+                leaveBehaviorRef.current = next;
+                setLeaveBehavior(next);
+                void saveSearchLeavePreference(next);
+              }}
+              trackColor={{
+                false: isDarkMode ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.12)",
+                true: "rgba(10,132,255,0.4)",
+              }}
+              thumbColor={leaveBehavior === "clear_on_leave" ? IOS_BLUE : isDarkMode ? "#f2f2f7" : "#ffffff"}
+              ios_backgroundColor={isDarkMode ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.12)"}
+            />
+          </View>
+          {searchStatsLoading || searchStatsError ? null : null}
         </View>
 
-        {searchMode === "insights" ? renderInsights() : renderChat()}
+        {renderChat()}
 
-        <Modal
-          visible={basketModalOpen}
-          animationType="slide"
-          transparent
-          onRequestClose={() => setBasketModalOpen(false)}
-        >
+        <Modal visible={basketModalOpen} animationType="slide" transparent onRequestClose={() => setBasketModalOpen(false)}>
           <View style={styles.modalBackdrop}>
             <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalSheetWrap}>
-              <View
-                style={[
-                  styles.modalSheet,
-                  { backgroundColor: bg, paddingBottom: Math.max(16, insets.bottom + 10) },
-                ]}
-              >
+              <View style={[styles.modalSheet, { backgroundColor: bg, paddingBottom: Math.max(16, insets.bottom + 10) }]}>
                 <View style={styles.modalHeader}>
                   <Text style={[styles.modalTitle, { color: textPrimary }]}>Basket</Text>
                   <TouchableOpacity
@@ -1073,15 +651,9 @@ export default function SearchScreen() {
                     <X size={22} color={textSecondary} />
                   </TouchableOpacity>
                 </View>
-                <ScrollView
-                  style={styles.modalScroll}
-                  keyboardShouldPersistTaps="handled"
-                  showsVerticalScrollIndicator={false}
-                >
+                <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
                   {basket.length === 0 ? (
-                    <Text style={[styles.modalEmpty, { color: textSecondary }]}>
-                      No items yet. Add lines below, or paste a list in chat.
-                    </Text>
+                    <Text style={[styles.modalEmpty, { color: textSecondary }]}>No items yet. Add lines below, or paste a list in chat.</Text>
                   ) : (
                     basket.map((it, idx) => (
                       <View key={`${it}_${idx}`} style={[styles.basketRow, { borderColor: "rgba(255,255,255,0.12)" }]}>
@@ -1144,11 +716,7 @@ export default function SearchScreen() {
                     accessibilityRole="button"
                     accessibilityLabel="Finalize basket estimate"
                   >
-                    {insightsLoading ? (
-                      <ActivityIndicator size="small" color="#FFF" />
-                    ) : (
-                      <Text style={styles.modalPrimaryBtnText}>Finalize</Text>
-                    )}
+                    {insightsLoading ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.modalPrimaryBtnText}>Finalize</Text>}
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1156,21 +724,25 @@ export default function SearchScreen() {
           </View>
         </Modal>
 
-        {isChatMode ? (
-          <View
-            style={[
-              styles.composerWrap,
-              {
-                backgroundColor: bg,
-                borderTopColor: "rgba(255,255,255,0.12)",
-                borderTopWidth: StyleSheet.hairlineWidth,
-                paddingTop: 10,
-                paddingBottom: 10 + tabBarReserve,
-              },
-            ]}
-            onLayout={(e) => setComposerAreaHeight(e.nativeEvent.layout.height)}
-          >
-            <View style={styles.chipRowOuter}>
+        <View
+          style={[
+            styles.composerWrap,
+            {
+              backgroundColor: bg,
+              borderTopColor: "rgba(255,255,255,0.12)",
+              borderTopWidth: StyleSheet.hairlineWidth,
+              paddingTop: 10,
+              paddingBottom: 10 + tabBarReserve,
+            },
+          ]}
+          onLayout={(e) => setComposerAreaHeight(e.nativeEvent.layout.height)}
+        >
+          <View style={styles.chipRowOuter}>
+            {dataChipsDisabled ? (
+              <Text style={[styles.chipHelper, { color: textSecondary }]}>
+                Verified receipts power these shortcuts (same as Insights). Scan one, then approve in Library if needed.
+              </Text>
+            ) : null}
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator
@@ -1181,16 +753,33 @@ export default function SearchScreen() {
                 const ChipIcon = p.Icon;
                 const chipFill = isDarkMode ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.92)";
                 const chipBorder = isDarkMode ? "rgba(255,255,255,0.16)" : "rgba(0,0,0,0.08)";
+                const dimmed = dataChipsDisabled;
                 return (
                   <View
                     key={`${p.label}-${idx}`}
-                    style={[styles.chipPill, { backgroundColor: chipFill, borderColor: chipBorder }]}
+                    style={[
+                      styles.chipPill,
+                      { backgroundColor: chipFill, borderColor: chipBorder, opacity: dimmed ? 0.55 : 1 },
+                    ]}
                   >
                     <TouchableOpacity
                       style={styles.chipInner}
                       activeOpacity={0.75}
-                      onPress={() => onQuickAction(p.text)}
-                      disabled={!searchHydrated}
+                      onPress={() => {
+                        if (!searchHydrated) return;
+                        if (dataChipsDisabled) {
+                          Alert.alert(
+                            "No verified receipts yet",
+                            "Assistant answers use the same verified totals as Insights. Scan a receipt and approve it in Library if it needs review.",
+                            [
+                              { text: "Not now", style: "cancel" },
+                              { text: "Open scanner", onPress: () => router.push("/modal/scanner") },
+                            ]
+                          );
+                          return;
+                        }
+                        onQuickAction(p.text);
+                      }}
                       accessibilityRole="button"
                       accessibilityLabel={`${p.label}. ${p.text}`}
                     >
@@ -1208,13 +797,10 @@ export default function SearchScreen() {
               end={{ x: 1, y: 0 }}
               style={styles.chipFadeRight}
             />
-            </View>
+          </View>
 
-            <GlassSurface isDark={isDarkMode} borderRadius={999} intensity={48} style={[LIQUID.shadow, styles.composerGlass]}>
-            <View
-              style={styles.composerRow}
-              onLayout={(e) => setComposerRowHeight(e.nativeEvent.layout.height)}
-            >
+          <GlassSurface isDark={isDarkMode} borderRadius={999} intensity={48} style={[LIQUID.shadow, styles.composerGlass]}>
+            <View style={styles.composerRow} onLayout={(e) => setComposerRowHeight(e.nativeEvent.layout.height)}>
               <TouchableOpacity
                 style={styles.composerBasketBtn}
                 onPress={() => setBasketModalOpen(true)}
@@ -1264,16 +850,11 @@ export default function SearchScreen() {
                 accessibilityLabel="Send"
                 hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
               >
-                {running || !searchHydrated ? (
-                  <ActivityIndicator size="small" color="#FFF" />
-                ) : (
-                  <Send size={18} color="#FFF" />
-                )}
+                {running || !searchHydrated ? <ActivityIndicator size="small" color="#FFF" /> : <Send size={18} color="#FFF" />}
               </TouchableOpacity>
             </View>
-            </GlassSurface>
-          </View>
-        ) : null}
+          </GlassSurface>
+        </View>
       </KeyboardAvoidingView>
     </View>
   );
@@ -1290,19 +871,8 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   headerTitleWrap: { flex: 1, minWidth: 0, marginRight: 10, justifyContent: "center" },
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    flexShrink: 0,
-    gap: 6,
-  },
-  headerTextBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    minHeight: 44,
-    justifyContent: "center",
-  },
+  headerActions: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 6 },
+  headerTextBtn: { paddingVertical: 10, paddingHorizontal: 8, minHeight: 44, justifyContent: "center" },
   headerActionText: { fontSize: TYPE.secondary, fontWeight: "700" },
   leavePrefRow: {
     flexDirection: "row",
@@ -1315,65 +885,6 @@ const styles = StyleSheet.create({
   },
   leavePrefLabel: { flex: 1, fontSize: TYPE.helper, fontWeight: "600", lineHeight: 18 },
   title: { fontSize: TYPE.pageTitle, fontWeight: "800", marginBottom: 2 },
-  segmentGlass: {
-    marginTop: 10,
-    marginBottom: 4,
-  },
-  segmentWrap: {
-    flexDirection: "row",
-    gap: 8,
-    padding: 6,
-  },
-  segmentBtn: {
-    flex: 1,
-    minHeight: 44,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 10,
-    backgroundColor: "transparent",
-  },
-  segmentBtnActive: {
-    backgroundColor: "rgba(10,132,255,0.18)",
-  },
-  segmentBtnText: { fontSize: TYPE.secondary, fontWeight: "800" },
-
-  modeScroll: { flex: 1 },
-  insightsScrollInner: {
-    paddingHorizontal: SPACING.pageHorizontal,
-    paddingTop: 8,
-  },
-  sectionTitle: { fontSize: TYPE.sectionTitle, fontWeight: "800" },
-  heroCardInner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    padding: CARD_PADDING,
-  },
-  heroAvatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  heroAvatarText: { fontSize: 20, fontWeight: "800" },
-  heroEyebrow: { fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5 },
-  heroTitle: { fontSize: TYPE.secondary, fontWeight: "800", marginTop: 2 },
-  heroAmount: { fontSize: TYPE.pageTitle, fontWeight: "800", marginTop: 4 },
-  barRowWrap: { marginBottom: 14 },
-  barRowHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6, gap: 8 },
-  barRowLabel: { flex: 1, fontSize: TYPE.secondary, fontWeight: "600" },
-  barRowValue: { fontSize: TYPE.secondary, fontWeight: "700" },
-  barTrack: {
-    height: 8,
-    borderRadius: 4,
-    overflow: "hidden",
-  },
-  barFill: {
-    height: "100%",
-    borderRadius: 4,
-  },
 
   chatList: { flex: 1 },
   chatContent: { paddingHorizontal: SPACING.pageHorizontal, paddingBottom: 10 },
@@ -1390,73 +901,6 @@ const styles = StyleSheet.create({
   },
   thinkingFooterText: { fontSize: TYPE.secondary, fontWeight: "600" },
 
-  statsError: { fontSize: TYPE.body, lineHeight: 21 },
-  emptyScanBtn: {
-    alignSelf: "flex-start",
-    minHeight: 44,
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 12,
-    justifyContent: "center",
-  },
-  emptyScanBtnText: { color: "#FFF", fontSize: TYPE.secondary, fontWeight: "800" },
-  statRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 10,
-    paddingVertical: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  statRowIcon: { marginTop: 2, width: 24, alignItems: "center" },
-  statLabel: { fontSize: TYPE.helper, fontWeight: "600", marginBottom: 4 },
-  statValue: { fontSize: TYPE.body, fontWeight: "700", lineHeight: 21 },
-
-  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" },
-  modalSheetWrap: { width: "100%", maxHeight: "88%" },
-  modalSheet: {
-    borderTopLeftRadius: RADIUS.card,
-    borderTopRightRadius: RADIUS.card,
-    paddingHorizontal: SPACING.pageHorizontal,
-    paddingTop: 12,
-  },
-  modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
-  modalTitle: { fontSize: TYPE.pageTitle, fontWeight: "800" },
-  modalScroll: { maxHeight: 420 },
-  modalEmpty: { fontSize: TYPE.body, lineHeight: 21, marginBottom: 12 },
-  basketRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  basketRowText: { flex: 1, fontSize: TYPE.body },
-  modalFieldLabel: { fontSize: TYPE.helper, fontWeight: "700", marginTop: 12, marginBottom: 8 },
-  modalAddRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  modalInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderRadius: RADIUS.button,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: TYPE.body,
-    minHeight: 44,
-  },
-  modalAddBtn: { width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  modalActions: { flexDirection: "row", gap: 10, marginTop: 14, marginBottom: 8, alignItems: "center" },
-  modalGhostBtn: {
-    flex: 1,
-    height: 48,
-    borderRadius: 12,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  modalGhostBtnText: { fontSize: TYPE.secondary, fontWeight: "800" },
-  modalPrimaryBtn: { flex: 1, height: 48, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  modalPrimaryBtnText: { color: "#FFF", fontSize: TYPE.secondary, fontWeight: "800" },
-
   msgRow: { flexDirection: "row" },
   bubble: {
     maxWidth: "84%",
@@ -1466,27 +910,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   bubbleText: { fontSize: TYPE.body, lineHeight: 21 },
-  summaryCardOuter: {
-    maxWidth: "100%",
-    width: "100%",
-  },
-  summaryCardError: {
-    borderLeftWidth: 3,
-    borderLeftColor: IOS_RED,
-  },
-  summaryCardLabelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 8,
-  },
-  summaryCardLabel: {
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
-    marginBottom: 8,
-  },
+  summaryCardOuter: { maxWidth: "100%", width: "100%" },
+  summaryCardError: { borderLeftWidth: 3, borderLeftColor: IOS_RED },
+  summaryCardLabelRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  summaryCardLabel: { fontSize: 11, fontWeight: "800", letterSpacing: 0.5, textTransform: "uppercase" },
   summaryCardBody: { fontSize: TYPE.body, lineHeight: 22 },
   assistantPlainOuter: {
     maxWidth: "100%",
@@ -1519,106 +946,44 @@ const styles = StyleSheet.create({
   ctaRow: { flexDirection: "row", gap: 10, marginTop: 14, alignItems: "center" },
   ctaBtn: { flex: 1, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
   ctaBtnText: { color: "#FFF", fontSize: TYPE.secondary, fontWeight: "800" },
-  ctaBtnGhost: {
-    flexDirection: "row",
-    gap: 6,
-    alignItems: "center",
-    justifyContent: "center",
-    height: 44,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
+  ctaBtnGhost: { flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", height: 44, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1 },
   ctaGhostText: { fontSize: TYPE.secondary, fontWeight: "700" },
 
-  chipRowOuter: {
-    position: "relative",
-    marginHorizontal: -4,
-  },
-  chipScroll: {
-    flexDirection: "row",
-    gap: 8,
-    paddingBottom: 10,
-    paddingHorizontal: 0,
-  },
-  chipScrollContent: {
-    paddingRight: 28,
-  },
-  chipFadeRight: {
-    position: "absolute",
-    right: 0,
-    top: 0,
-    bottom: 10,
-    width: 36,
-  },
-  chipPill: {
-    marginRight: 8,
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: "hidden",
-  },
-  chipInner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    minHeight: 44,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-  },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" },
+  modalSheetWrap: { width: "100%", maxHeight: "88%" },
+  modalSheet: { borderTopLeftRadius: RADIUS.card, borderTopRightRadius: RADIUS.card, paddingHorizontal: SPACING.pageHorizontal, paddingTop: 12 },
+  modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  modalTitle: { fontSize: TYPE.pageTitle, fontWeight: "800" },
+  modalScroll: { maxHeight: 420 },
+  modalEmpty: { fontSize: TYPE.body, lineHeight: 21, marginBottom: 12 },
+  basketRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
+  basketRowText: { flex: 1, fontSize: TYPE.body },
+  modalFieldLabel: { fontSize: TYPE.helper, fontWeight: "700", marginTop: 12, marginBottom: 8 },
+  modalAddRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  modalInput: { flex: 1, borderWidth: 1, borderRadius: RADIUS.button, paddingHorizontal: 12, paddingVertical: 10, fontSize: TYPE.body, minHeight: 44 },
+  modalAddBtn: { width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  modalActions: { flexDirection: "row", gap: 10, marginTop: 14, marginBottom: 8, alignItems: "center" },
+  modalGhostBtn: { flex: 1, height: 48, borderRadius: 12, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  modalGhostBtnText: { fontSize: TYPE.secondary, fontWeight: "800" },
+  modalPrimaryBtn: { flex: 1, height: 48, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  modalPrimaryBtnText: { color: "#FFF", fontSize: TYPE.secondary, fontWeight: "800" },
+
+  chipRowOuter: { position: "relative", marginHorizontal: -4 },
+  chipHelper: { fontSize: TYPE.helper, lineHeight: 18, marginBottom: 8, paddingHorizontal: 4 },
+  chipScroll: { flexDirection: "row", gap: 8, paddingBottom: 10, paddingHorizontal: 0 },
+  chipScrollContent: { paddingRight: 28 },
+  chipFadeRight: { position: "absolute", right: 0, top: 0, bottom: 10, width: 36 },
+  chipPill: { marginRight: 8, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
+  chipInner: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 44, paddingVertical: 10, paddingHorizontal: 14 },
   chipText: { fontSize: TYPE.secondary, fontWeight: "700" },
 
-  composerGlass: {
-    marginTop: 4,
-  },
-
-  composerWrap: {
-    paddingHorizontal: SPACING.pageHorizontal,
-    paddingTop: 10,
-    paddingBottom: 10,
-    position: "relative",
-  },
-  composerRow: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    paddingLeft: 6,
-    paddingRight: 6,
-    paddingVertical: 6,
-    gap: 4,
-  },
-  composerBasketBtn: {
-    position: "relative",
-    width: 44,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 2,
-  },
-  composerBasketBadge: {
-    position: "absolute",
-    top: 2,
-    right: 0,
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 4,
-  },
+  composerGlass: { marginTop: 4 },
+  composerWrap: { paddingHorizontal: SPACING.pageHorizontal, paddingTop: 10, paddingBottom: 10, position: "relative" },
+  composerRow: { flexDirection: "row", alignItems: "flex-end", paddingLeft: 6, paddingRight: 6, paddingVertical: 6, gap: 4 },
+  composerBasketBtn: { position: "relative", width: 44, height: 44, alignItems: "center", justifyContent: "center", marginBottom: 2 },
+  composerBasketBadge: { position: "absolute", top: 2, right: 0, minWidth: 18, height: 18, borderRadius: 9, alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
   composerBasketBadgeText: { color: "#FFF", fontSize: 10, fontWeight: "800" },
-  composerInput: {
-    flex: 1,
-    minHeight: 22,
-    fontSize: TYPE.body,
-    lineHeight: 20,
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-  },
-  sendBtnInline: {
-    width: 44,
-    height: 44,
-    borderRadius: 999,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 2,
-  },
+  composerInput: { flex: 1, minHeight: 22, fontSize: TYPE.body, lineHeight: 20, paddingVertical: 8, paddingHorizontal: 4 },
+  sendBtnInline: { width: 44, height: 44, borderRadius: 999, alignItems: "center", justifyContent: "center", marginBottom: 2 },
 });
+

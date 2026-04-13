@@ -179,6 +179,9 @@ export type SearchStatsResponse = {
   topStoresByVisits: { name: string; visits: number }[];
   last30Days: { totalSpend: number; avgPerDay: number };
   community: { weightedAvgPrice: number } | null;
+  /** Counts for trust UI (personal receipts). */
+  verifiedReceiptCount?: number;
+  needsReviewCount?: number;
 };
 
 export async function getSearchStats(idToken: string | null): Promise<SearchStatsResponse> {
@@ -203,6 +206,8 @@ export async function getSummary(idToken: string | null): Promise<{
   categories: SummaryCategory[];
   displayName?: string | null;
   avatarUrl?: string | null;
+  verifiedReceiptCount?: number;
+  needsReviewCount?: number;
 }> {
   try {
     const res = await fetch(`${getBaseURL()}/api/transactions/summary`, {

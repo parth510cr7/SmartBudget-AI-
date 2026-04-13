@@ -6,8 +6,9 @@ import { API_VERSION } from "../constants/api";
 
 const router = Router();
 
+/** Context for debug preview: VERIFIED receipts only, aligned with runAppQuery / analytics. */
 function buildReceiptContext(receipts: { date: Date; total: number; store: { name: string }; items: { name: string; rawName: string; totalPrice: number }[] }[]): string {
-  if (!receipts.length) return "The user has no receipts or transactions yet.";
+  if (!receipts.length) return "The user has no verified receipts yet.";
   const lines: string[] = [];
   const now = new Date();
   const last30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -49,20 +50,32 @@ router.post("/chat", async (req: AuthRequest, res: Response) => {
       res.status(404).json({ error: "User not found", meta });
       return;
     }
-    const receipts = await prisma.receipt.findMany({
-      where: { userId: user.id },
-      include: { store: true, items: true },
-      orderBy: { date: "desc" },
-    });
+    const [verifiedReceipts, verifiedCount, needsReviewCount] = await Promise.all([
+      prisma.receipt.findMany({
+        where: { userId: user.id, status: "VERIFIED" },
+        include: { store: true, items: true },
+        orderBy: { date: "desc" },
+        take: 50,
+      }),
+      prisma.receipt.count({ where: { userId: user.id, status: "VERIFIED" } }),
+      prisma.receipt.count({ where: { userId: user.id, status: "NEEDS_REVIEW" } }),
+    ]);
     // Cloud chat is disabled; provide a deterministic, item-aware fallback instead of a generic error.
     // This keeps Search useful for queries like "Milk" without requiring an LLM.
     const q = userMessage || "summary";
     const app = await runAppQuery(user.id, q);
-    const context = buildReceiptContext(receipts);
+    const context = buildReceiptContext(verifiedReceipts);
     const receiptLine =
-      receipts.length === 0
+      verifiedCount === 0 && needsReviewCount === 0
         ? "Add a few verified receipts to get richer answers."
-        : `Based on ${receipts.length} receipt${receipts.length === 1 ? "" : "s"} in your library.`;
+        : [
+            `Numbers above use ${verifiedCount} verified receipt${verifiedCount === 1 ? "" : "s"} (same as Insights).`,
+            needsReviewCount > 0
+              ? `${needsReviewCount} receipt${needsReviewCount === 1 ? "" : "s"} need review in Library and are not included in those totals.`
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
     const reply = [app.answer, "", receiptLine].join("\n");
     res.json({
       reply,

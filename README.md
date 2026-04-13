@@ -2,6 +2,10 @@
 
 Budget and receipt tracking app with scan, insights, and basket recommendations.
 
+## Docs (start here)
+
+See `docs/README.md`.
+
 ## Run the app (both ends required)
 
 You need to start **both** the backend and the frontend.

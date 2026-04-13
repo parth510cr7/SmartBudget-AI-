@@ -122,3 +122,37 @@ export async function parseWithOnDeviceLLM(rawText: string): Promise<ReceiptPars
     return null;
   }
 }
+
+/** Short synthetic receipt for Profile self-test (no network). */
+const SELF_TEST_RECEIPT = `FRESH MART GROCERY
+123 Main St
+Subtotal $18.50
+Tax $1.49
+TOTAL $19.99
+01/22/2025`;
+
+/**
+ * Quick parse on fixed text to verify the loaded model responds with JSON.
+ * Call from Profile after “Load model” to confirm on-device parsing works.
+ */
+export async function runOnDeviceLLMSelfTest(): Promise<{ ok: boolean; message: string }> {
+  if (!isLLMReady()) {
+    return { ok: false, message: "Load the model first, then run this test." };
+  }
+  try {
+    const result = await parseWithOnDeviceLLM(SELF_TEST_RECEIPT);
+    if (result?.storeName && result.total != null && result.total > 0) {
+      return {
+        ok: true,
+        message: `OK — extracted store “${result.storeName}” and total $${result.total.toFixed(2)}.`,
+      };
+    }
+    return {
+      ok: false,
+      message: "Model ran but did not return a valid store/total. Try Load model again or re-download the file.",
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, message: msg || "Self-test failed." };
+  }
+}

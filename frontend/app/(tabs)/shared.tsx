@@ -11,12 +11,21 @@ import {
   TextInput,
   Animated,
   Share,
+  ScrollView,
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, useFocusEffect } from "expo-router";
-import { Users, Plus, X, Trash2, Link, Contact, UserPlus, Home } from "lucide-react-native";
-import { getGroups, createGroup, deleteGroup, createGroupInviteLink, type GroupRow } from "../../src/api/client";
+import { Users, Plus, X, Trash2, Link, Contact, UserPlus, Home, Info } from "lucide-react-native";
+import {
+  getGroups,
+  createGroup,
+  deleteGroup,
+  createGroupInviteLink,
+  getHouseholdDashboard,
+  type GroupRow,
+  type HouseholdDashboardResponse,
+} from "../../src/api/client";
 import { useStore } from "../../src/store/useStore";
 import { GlassSurface } from "../../src/components/GlassSurface";
 import { getTheme, IOS_BLUE, SPACING, RADIUS, LIQUID } from "../../src/theme";
@@ -38,6 +47,9 @@ export default function SharedTabScreen() {
   const [creating, setCreating] = useState(false);
   const [inviteOptionsGroupId, setInviteOptionsGroupId] = useState<string | null>(null);
   const [inviteLinkLoading, setInviteLinkLoading] = useState(false);
+  const [householdDash, setHouseholdDash] = useState<HouseholdDashboardResponse | null>(null);
+  const [householdDashLoading, setHouseholdDashLoading] = useState(false);
+  const [sharingExplainerVisible, setSharingExplainerVisible] = useState(false);
   const glowAnim = useRef(new Animated.Value(0)).current;
 
   const safeToken = authToken || "dev-token";
@@ -57,10 +69,23 @@ export default function SharedTabScreen() {
     }
   }, [safeToken]);
 
+  const loadHouseholdDashboard = useCallback(async () => {
+    setHouseholdDashLoading(true);
+    try {
+      const d = await getHouseholdDashboard(authToken ?? safeToken);
+      setHouseholdDash(d);
+    } catch {
+      setHouseholdDash(null);
+    } finally {
+      setHouseholdDashLoading(false);
+    }
+  }, [authToken, safeToken]);
+
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [load])
+      void loadHouseholdDashboard();
+    }, [load, loadHouseholdDashboard])
   );
 
   useEffect(() => {
@@ -148,6 +173,33 @@ export default function SharedTabScreen() {
           </View>
         </GlassSurface>
       </TouchableOpacity>
+
+      <TouchableOpacity
+        onPress={() => setSharingExplainerVisible(true)}
+        style={styles.explainerLink}
+        accessibilityRole="button"
+        accessibilityLabel="How personal versus household sharing works"
+      >
+        <Info size={18} color={IOS_BLUE} />
+        <Text style={[styles.explainerLinkText, { color: IOS_BLUE }]}>How personal vs household works</Text>
+      </TouchableOpacity>
+
+      {householdDashLoading ? (
+        <View style={styles.householdDashLoading}>
+          <ActivityIndicator size="small" color={IOS_BLUE} />
+        </View>
+      ) : householdDash?.household ? (
+        <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.householdDashCard]}>
+          <Text style={[styles.householdDashTitle, { color: textPrimary }]}>Household total (verified)</Text>
+          <Text style={[styles.householdDashAmount, { color: textPrimary }]}>
+            ${Number(householdDash.totals.totalSpend).toFixed(2)}
+          </Text>
+          <Text style={[styles.householdDashSub, { color: textSecondary }]}>
+            Sum of household-visible receipts marked verified. Your Home and Insights tabs use your personal verified
+            receipts only — not double-counted with this total.
+          </Text>
+        </GlassSurface>
+      ) : null}
 
       {error ? (
         <View style={styles.errorBlock}>
@@ -350,6 +402,54 @@ export default function SharedTabScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal visible={sharingExplainerVisible} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.explainerOverlay}
+          activeOpacity={1}
+          onPress={() => setSharingExplainerVisible(false)}
+        >
+          <View style={styles.explainerCardWrap}>
+            <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.explainerCard]}>
+              <View style={styles.explainerHeader}>
+                <Text style={[styles.explainerModalTitle, { color: textPrimary }]}>Personal vs household</Text>
+                <TouchableOpacity onPress={() => setSharingExplainerVisible(false)} hitSlop={12} accessibilityLabel="Close">
+                  <X size={24} color={textPrimary} />
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={styles.explainerScroll} showsVerticalScrollIndicator={false}>
+                <Text style={[styles.explainerPara, { color: textSecondary }]}>
+                  Each receipt is stored once. You choose visibility when you save it — that controls who can see it and
+                  which totals it affects.
+                </Text>
+                <Text style={[styles.explainerBullet, { color: textPrimary }]}>
+                  • Personal: counts toward Home, Insights, and Assistant for your account only.
+                </Text>
+                <Text style={[styles.explainerBullet, { color: textPrimary }]}>
+                  • Household: visible to members; the household total on this tab uses verified household receipts only
+                  (same rule as Insights: pending review is excluded until you approve in Library).
+                </Text>
+                <Text style={[styles.explainerBullet, { color: textPrimary }]}>
+                  • Groups below are for splitting bills with friends — separate from household receipts.
+                </Text>
+                <Text style={[styles.explainerPara, { color: textSecondary }]}>
+                  You are not double-charged in the app: a single receipt does not add to both personal and household
+                  analytics unless you intentionally use different features (e.g. personal Insights vs household card
+                  here).
+                </Text>
+              </ScrollView>
+              <TouchableOpacity
+                style={[styles.explainerDone, { backgroundColor: IOS_BLUE }]}
+                onPress={() => setSharingExplainerVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Done"
+              >
+                <Text style={styles.explainerDoneText}>Done</Text>
+              </TouchableOpacity>
+            </GlassSurface>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -380,6 +480,39 @@ const styles = StyleSheet.create({
   },
   householdTitle: { fontSize: 17, fontWeight: "800" },
   householdSub: { fontSize: 13, marginTop: 2, lineHeight: 18 },
+  explainerLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginHorizontal: SPACING.pageHorizontal,
+    marginBottom: 12,
+    minHeight: 44,
+  },
+  explainerLinkText: { fontSize: 15, fontWeight: "600" },
+  householdDashLoading: { alignItems: "center", marginBottom: 12 },
+  householdDashCard: {
+    marginHorizontal: SPACING.pageHorizontal,
+    marginBottom: 16,
+    padding: SPACING.cardPadding,
+  },
+  householdDashTitle: { fontSize: 13, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5 },
+  householdDashAmount: { fontSize: 28, fontWeight: "800", marginTop: 8 },
+  householdDashSub: { fontSize: 13, marginTop: 10, lineHeight: 19 },
+  explainerOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    padding: 24,
+  },
+  explainerCardWrap: { width: "100%", maxWidth: 400, alignSelf: "center" },
+  explainerCard: { padding: 20, maxHeight: "85%" },
+  explainerHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  explainerModalTitle: { fontSize: 18, fontWeight: "800", flex: 1, paddingRight: 12 },
+  explainerScroll: { maxHeight: 360 },
+  explainerPara: { fontSize: 14, lineHeight: 21, marginBottom: 12 },
+  explainerBullet: { fontSize: 14, lineHeight: 21, marginBottom: 10 },
+  explainerDone: { marginTop: 16, paddingVertical: 14, borderRadius: 12, alignItems: "center" },
+  explainerDoneText: { color: "#FFF", fontSize: 16, fontWeight: "700" },
   listContent: { paddingHorizontal: SPACING.pageHorizontal, paddingBottom: 120 },
   groupCardOuter: {
     marginBottom: 12,

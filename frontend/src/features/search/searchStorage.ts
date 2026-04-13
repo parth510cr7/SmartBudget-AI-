@@ -2,8 +2,12 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { ChatMessage } from "./searchUtils";
 
 const STORAGE_KEY = "smartbudget_search_chat_v1";
+const LEAVE_PREF_KEY = "smartbudget_search_leave_pref_v1";
 
 const MAX_MESSAGES = 100;
+
+/** Whether chat is kept when navigating away from Assistant, or cleared on blur. */
+export type SearchChatLeaveBehavior = "persist" | "clear_on_leave";
 
 /** Insights = analytics only. Chat = messages + composer. */
 export type SearchScreenMode = "insights" | "chat";
@@ -66,6 +70,24 @@ export async function saveSearchChatState(state: PersistedSearchState): Promise<
 export async function clearSearchChatStorage(): Promise<void> {
   try {
     await AsyncStorage.removeItem(STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function loadSearchLeavePreference(): Promise<SearchChatLeaveBehavior> {
+  try {
+    const raw = await AsyncStorage.getItem(LEAVE_PREF_KEY);
+    if (raw === "clear_on_leave") return "clear_on_leave";
+    return "persist";
+  } catch {
+    return "persist";
+  }
+}
+
+export async function saveSearchLeavePreference(behavior: SearchChatLeaveBehavior): Promise<void> {
+  try {
+    await AsyncStorage.setItem(LEAVE_PREF_KEY, behavior);
   } catch {
     /* ignore */
   }

@@ -79,10 +79,14 @@ router.get("/summary", async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const receipts = await prisma.receipt.findMany({
-      where: { userId: user.id, status: "VERIFIED" },
-      include: { store: true, items: true },
-    });
+    const [receipts, verifiedReceiptCount, needsReviewCount] = await Promise.all([
+      prisma.receipt.findMany({
+        where: { userId: user.id, status: "VERIFIED" },
+        include: { store: true, items: true },
+      }),
+      prisma.receipt.count({ where: { userId: user.id, status: "VERIFIED" } }),
+      prisma.receipt.count({ where: { userId: user.id, status: "NEEDS_REVIEW" } }),
+    ]);
 
     let totalSpent = receipts.reduce((sum, r) => sum + Number(r.total), 0);
     const storeIds = new Set(receipts.map((r) => r.storeId));
@@ -134,6 +138,8 @@ router.get("/summary", async (req: AuthRequest, res: Response) => {
       categories,
       displayName: user.displayName ?? null,
       avatarUrl: user.avatarUrl ?? null,
+      verifiedReceiptCount,
+      needsReviewCount,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to get summary";
@@ -156,10 +162,14 @@ router.get("/search-stats", async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const receipts = await prisma.receipt.findMany({
-      where: { userId: user.id, status: "VERIFIED" },
-      include: { store: true, items: true },
-    });
+    const [receipts, verifiedReceiptCount, needsReviewCount] = await Promise.all([
+      prisma.receipt.findMany({
+        where: { userId: user.id, status: "VERIFIED" },
+        include: { store: true, items: true },
+      }),
+      prisma.receipt.count({ where: { userId: user.id, status: "VERIFIED" } }),
+      prisma.receipt.count({ where: { userId: user.id, status: "NEEDS_REVIEW" } }),
+    ]);
 
     // Most visited store (receipt count per store)
     const byStoreKey = new Map<string, { name: string; visits: number }>();
@@ -269,6 +279,8 @@ router.get("/search-stats", async (req: AuthRequest, res: Response) => {
       topStoresByVisits,
       last30Days,
       community,
+      verifiedReceiptCount,
+      needsReviewCount,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to get search stats";

@@ -12,8 +12,8 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "expo-router";
-import { User, LogOut, Trash2, MapPin, ChevronDown, ChevronRight } from "lucide-react-native";
-import { postDemoSeed, purgeAllData, healthCheck, getApiBase, seedTestGroup } from "../../src/api/client";
+import { User, LogOut, Trash2, MapPin, Cpu, CheckCircle2, XCircle } from "lucide-react-native";
+import { purgeAllData } from "../../src/api/client";
 import { useStore } from "../../src/store/useStore";
 import { GlassSurface } from "../../src/components/GlassSurface";
 import { getTheme, IOS_BLUE, IOS_RED, SPACING, RADIUS, LIQUID } from "../../src/theme";
@@ -28,17 +28,17 @@ import {
   isLLMAvailable,
   isLLMReady,
   initOnDeviceLLM,
+  runOnDeviceLLMSelfTest,
 } from "../../src/services/onDeviceLLM";
 import {
   isModelDownloaded,
   downloadPhiModel,
   getModelFileUri,
-  getModelPath,
   getModelInfo,
   deletePhiModel,
+  diagnoseFileSystem,
+  type FileSystemDiagnostics,
 } from "../../src/services/phiModelDownload";
-import * as FileSystem from "expo-file-system";
-import { Platform } from "react-native";
 
 function isImageUri(s: string): boolean {
   return s.startsWith("http") || s.startsWith("data:") || s.startsWith("file:");
@@ -46,11 +46,7 @@ function isImageUri(s: string): boolean {
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [checkingConnection, setCheckingConnection] = useState(false);
-  const [seeding, setSeeding] = useState(false);
   const [locationStatus, setLocationStatus] = useState<"granted" | "denied" | "undetermined">("undetermined");
-  const [devSectionExpanded, setDevSectionExpanded] = useState(false);
   const [modelDownloaded, setModelDownloaded] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloading, setDownloading] = useState(false);
@@ -58,8 +54,11 @@ export default function ProfileScreen() {
   const [loadingModel, setLoadingModel] = useState(false);
   const [llmReady, setLlmReady] = useState(false);
   const [modelInfo, setModelInfo] = useState<{ path: string; exists: boolean; sizeBytes: number } | null>(null);
+  const [fsDiag, setFsDiag] = useState<FileSystemDiagnostics | null>(null);
   const [lastLoadError, setLastLoadError] = useState<string | null>(null);
-  const [storageDiag, setStorageDiag] = useState<{ platform: string; docDir: string | null; cacheDir: string | null } | null>(null);
+  const [selfTesting, setSelfTesting] = useState(false);
+  const [selfTestMessage, setSelfTestMessage] = useState<string | null>(null);
+  const [selfTestOk, setSelfTestOk] = useState<boolean | null>(null);
   const user = useStore((s) => s.user);
   const authToken = useStore((s) => (s.user as { idToken?: string } | null)?.idToken ?? null);
   const isDarkMode = useStore((s) => s.isDarkMode ?? false);
@@ -79,13 +78,8 @@ export default function ProfileScreen() {
       getLocationPermissionStatus().then(setLocationStatus);
       isModelDownloaded().then(setModelDownloaded);
       getModelInfo().then(setModelInfo).catch(() => setModelInfo(null));
+      diagnoseFileSystem().then(setFsDiag).catch(() => setFsDiag(null));
       setLlmReady(isLLMReady());
-      const fs = FileSystem as unknown as { documentDirectory?: string | null; cacheDirectory?: string | null };
-      setStorageDiag({
-        platform: Platform.OS,
-        docDir: fs.documentDirectory ?? null,
-        cacheDir: fs.cacheDirectory ?? null,
-      });
     }, [setLocationConsent])
   );
 
@@ -126,33 +120,6 @@ export default function ProfileScreen() {
     );
   }, [setLocationConsent]);
 
-  async function loadDemoData() {
-    setLoading(true);
-    try {
-      const result = await postDemoSeed(authToken);
-      useStore.getState().triggerDashboardRefresh();
-      Alert.alert("Done", `Loaded ${result.receipts ?? 0} receipts and ${result.stores ?? 0} stores.`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to load demo data";
-      Alert.alert("Error", msg);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleSeedTestGroup() {
-    setSeeding(true);
-    try {
-      const { groupId } = await seedTestGroup(authToken ?? "dev-token");
-      useStore.getState().triggerDashboardRefresh();
-      router.push(`/group/${groupId}`);
-    } catch (e) {
-      Alert.alert("Seed Failed", e instanceof Error ? e.message : "Could not create test group");
-    } finally {
-      setSeeding(false);
-    }
-  }
-
   function handleReset() {
     Alert.alert(
       "Reset App Data",
@@ -181,25 +148,6 @@ export default function ProfileScreen() {
     useStore.getState().setUser(null);
   }
 
-  async function handleCheckConnection() {
-    setCheckingConnection(true);
-    try {
-      const data = await healthCheck();
-      Alert.alert(
-        "Connection OK",
-        `Backend at ${getApiBase()} responded: ${data.status}\n${data.timestamp ? `(${data.timestamp})` : ""}`
-      );
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Request failed";
-      Alert.alert(
-        "Connection failed",
-        `${msg}\n\nMake sure the backend is running and EXPO_PUBLIC_API_URL in .env points to it.`
-      );
-    } finally {
-      setCheckingConnection(false);
-    }
-  }
-
   const llmAvailable = isLLMAvailable();
 
   async function handleDownloadPhiModel() {
@@ -207,9 +155,13 @@ export default function ProfileScreen() {
     setDownloadError(null);
     setDownloadProgress(0);
     try {
+      const d = await diagnoseFileSystem().catch(() => null);
+      if (d) setFsDiag(d);
       await downloadPhiModel((p) => setDownloadProgress(p));
       setModelDownloaded(true);
       getModelInfo().then(setModelInfo).catch(() => setModelInfo(null));
+      setSelfTestMessage(null);
+      setSelfTestOk(null);
     } catch (e) {
       setDownloadError(e instanceof Error ? e.message : "Download failed");
     } finally {
@@ -222,25 +174,46 @@ export default function ProfileScreen() {
     setLoadingModel(true);
     setDownloadError(null);
     setLastLoadError(null);
+    setSelfTestMessage(null);
+    setSelfTestOk(null);
     try {
       const info = await getModelInfo().catch(() => null);
       setModelInfo(info);
       const okDownloaded = await isModelDownloaded();
       if (!okDownloaded) {
         const sizeMb = info ? (info.sizeBytes / (1024 * 1024)).toFixed(0) : "0";
-        setDownloadError(`Model file missing or incomplete (size ${sizeMb} MB). Re-download and try again.`);
+        setDownloadError(`Model file missing or incomplete (size ${sizeMb} MB). Download again on Wi‑Fi.`);
         return;
       }
       const uri = getModelFileUri();
       const ok = await initOnDeviceLLM(uri, (p) => setDownloadProgress(p));
       setLlmReady(ok);
-      if (!ok) setDownloadError("Failed to load model");
+      if (!ok) setDownloadError("Failed to load model into memory.");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Load failed";
       setDownloadError(msg);
       setLastLoadError(msg);
     } finally {
       setLoadingModel(false);
+    }
+  }
+
+  async function handleSelfTest() {
+    setSelfTesting(true);
+    setSelfTestMessage(null);
+    setSelfTestOk(null);
+    try {
+      const r = await runOnDeviceLLMSelfTest();
+      setSelfTestOk(r.ok);
+      setSelfTestMessage(r.message);
+      Alert.alert(r.ok ? "Self-test passed" : "Self-test failed", r.message);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Test error";
+      setSelfTestOk(false);
+      setSelfTestMessage(msg);
+      Alert.alert("Self-test error", msg);
+    } finally {
+      setSelfTesting(false);
     }
   }
 
@@ -255,11 +228,17 @@ export default function ProfileScreen() {
             ? "Location: enable below for nearby prices"
             : "Location: not requested";
 
+  const statusRow = (ok: boolean, label: string) => (
+    <View style={styles.statusRow}>
+      {ok ? <CheckCircle2 size={18} color="#34C759" /> : <XCircle size={18} color={textSecondary} />}
+      <Text style={[styles.statusRowText, { color: textPrimary }]}>{label}</Text>
+    </View>
+  );
+
   return (
     <ScrollView style={[styles.container, { backgroundColor: bg }]} contentContainerStyle={styles.content}>
       <Text style={[styles.headerTitle, { color: textPrimary }]}>Profile</Text>
 
-      {/* Section 1 — Account */}
       {isLoggedIn ? (
         <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.userCard]}>
           <View style={[styles.avatarWrap, { backgroundColor: bg }]}>
@@ -270,9 +249,7 @@ export default function ProfileScreen() {
             )}
           </View>
           <Text style={[styles.userName, { color: textPrimary }]}>{headerName}</Text>
-          {userEmail ? (
-            <Text style={[styles.userEmail, { color: textSecondary }]}>{userEmail}</Text>
-          ) : null}
+          {userEmail ? <Text style={[styles.userEmail, { color: textSecondary }]}>{userEmail}</Text> : null}
           <TouchableOpacity style={styles.logOutBtn} onPress={handleLogOut} activeOpacity={0.85}>
             <LogOut size={18} color={IOS_RED} />
             <Text style={styles.logOutBtnText}>Log Out</Text>
@@ -302,7 +279,6 @@ export default function ProfileScreen() {
         </>
       )}
 
-      {/* Privacy & Location */}
       <Text style={[styles.sectionLabel, { color: textSecondary }]}>Privacy & Location</Text>
       <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.privacyCard]}>
         <View style={styles.privacyRow}>
@@ -331,7 +307,6 @@ export default function ProfileScreen() {
         </TouchableOpacity>
       </GlassSurface>
 
-      {/* Section 4 — Data */}
       <Text style={[styles.sectionLabel, { color: textSecondary }]}>Data</Text>
       <TouchableOpacity onPress={() => router.push("/modal/price-history-sharing")} activeOpacity={0.85}>
         <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.privacyCard]}>
@@ -350,30 +325,103 @@ export default function ProfileScreen() {
         <Text style={[styles.dataResetText, { color: IOS_RED }]}>Reset app data</Text>
       </TouchableOpacity>
 
-      {/* On-device AI — Phi 3.5 mini */}
       <Text style={[styles.sectionLabel, { color: textSecondary }]}>On-device AI</Text>
       <GlassSurface isDark={isDarkMode} borderRadius={RADIUS.card} style={[LIQUID.shadow, styles.privacyCard]}>
-        <Text style={[styles.privacyTitle, { color: textPrimary }]}>Phi 3.5 mini</Text>
+        <View style={styles.llmHeaderRow}>
+          <Cpu size={22} color={IOS_BLUE} />
+          <Text style={[styles.privacyTitle, { color: textPrimary, marginBottom: 0 }]}>Phi 3.5 mini</Text>
+        </View>
         <Text style={[styles.privacyHint, { color: textSecondary }]}>
-          Parse receipts on-device with no cloud. Download once (~1.4 GB), then load. Requires a development build.
+          Download the small GGUF once (~1.4 GB), then load it to test on-device receipt parsing. Requires a development
+          build with llama.rn (not Expo Go).
         </Text>
-        {storageDiag ? (
+
+        {statusRow(llmAvailable, "Native module (llama.rn) present")}
+        {statusRow(modelDownloaded, "Model file on device (complete download)")}
+        {statusRow(llmReady, "Model loaded — ready to parse")}
+
+        {fsDiag ? (
+          <View style={{ marginTop: 10 }}>
+            <Text style={[styles.hint, { color: textSecondary }]}>
+              FileSystem doc: {fsDiag.documentDirectory ?? "null"}
+            </Text>
+            <Text style={[styles.hint, { color: textSecondary }]}>
+              FileSystem cache: {fsDiag.cacheDirectory ?? "null"}
+            </Text>
+            <Text style={[styles.hint, { color: textSecondary }]}>
+              Native ExpoFileSystem: {fsDiag.expoNativeModule} · requireNativeModule:{" "}
+              {fsDiag.requireNativeModuleOk ? "ok" : "failed"}
+            </Text>
+            {!fsDiag.requireNativeModuleOk && fsDiag.requireNativeModuleError ? (
+              <Text style={[styles.hint, { color: IOS_RED }]}>
+                {fsDiag.requireNativeModuleError}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+
+        {modelInfo?.exists && !modelDownloaded ? (
           <Text style={[styles.hint, { color: textSecondary }]}>
-            Storage: {storageDiag.platform} · docDir {storageDiag.docDir ? "ok" : "null"} · cacheDir {storageDiag.cacheDir ? "ok" : "null"}
+            On disk: {(modelInfo.sizeBytes / (1024 * 1024)).toFixed(0)} MB
+            {modelInfo.sizeBytes > 0 && modelInfo.sizeBytes < 900 * 1024 * 1024 ? " — file may be incomplete" : ""}
           </Text>
         ) : null}
-        {modelInfo ? (
-          <Text style={[styles.hint, { color: textSecondary }]}>
-            Model: {modelInfo.exists ? "found" : "missing"} · {(modelInfo.sizeBytes / (1024 * 1024)).toFixed(0)} MB
-          </Text>
-        ) : null}
+
         {!llmAvailable ? (
-          <Text style={[styles.privacyHint, { color: textSecondary }]}>
-            Not available in Expo Go. Build with: npx expo run:ios or EAS Build.
+          <Text style={[styles.privacyHint, { color: textSecondary, marginTop: 8 }]}>
+            Not available in Expo Go. Use{" "}
+            <Text style={{ fontWeight: "700" }}>npx expo run:ios</Text> / Android or an EAS dev client build.
           </Text>
         ) : llmReady ? (
-          <Text style={[styles.privacyStatus, { color: IOS_BLUE, fontWeight: "600" }]}>Ready — receipts use on-device LLM when possible.</Text>
-        ) : modelDownloaded || modelInfo?.exists ? (
+          <>
+            <Text style={[styles.privacyStatus, { color: IOS_BLUE, fontWeight: "600", marginTop: 8 }]}>
+              Ready — receipts can use on-device parsing when this model is loaded.
+            </Text>
+            <TouchableOpacity
+              style={[styles.secondaryBtn, { borderColor: IOS_BLUE }]}
+              onPress={handleSelfTest}
+              disabled={selfTesting}
+            >
+              {selfTesting ? (
+                <ActivityIndicator color={IOS_BLUE} size="small" />
+              ) : (
+                <Text style={[styles.secondaryBtnText, { color: IOS_BLUE }]}>Run self-test</Text>
+              )}
+            </TouchableOpacity>
+            <Text style={[styles.hint, { color: textSecondary }]}>
+              Runs a short sample receipt through the same parser used for real scans (no network).
+            </Text>
+            {selfTestMessage ? (
+              <Text style={[styles.hint, { color: selfTestOk ? "#34C759" : IOS_RED }]}>{selfTestMessage}</Text>
+            ) : null}
+            <TouchableOpacity
+              style={[styles.dataResetBtn, { borderColor: "rgba(255, 59, 48, 0.35)", marginBottom: 6 }]}
+              onPress={async () => {
+                Alert.alert("Delete model", "Remove the downloaded model from this device? You can download it again later.", [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Delete",
+                    style: "destructive",
+                    onPress: async () => {
+                      await deletePhiModel();
+                      setModelDownloaded(false);
+                      setLlmReady(false);
+                      setDownloadError(null);
+                      setLastLoadError(null);
+                      setSelfTestMessage(null);
+                      setSelfTestOk(null);
+                      getModelInfo().then(setModelInfo).catch(() => setModelInfo(null));
+                    },
+                  },
+                ]);
+              }}
+              activeOpacity={0.85}
+            >
+              <Trash2 size={18} color={IOS_RED} />
+              <Text style={[styles.dataResetText, { color: IOS_RED }]}>Delete downloaded model</Text>
+            </TouchableOpacity>
+          </>
+        ) : modelDownloaded ? (
           <>
             <TouchableOpacity
               style={[styles.demoBtn, { backgroundColor: IOS_BLUE }]}
@@ -381,15 +429,18 @@ export default function ProfileScreen() {
               disabled={loadingModel}
             >
               {loadingModel ? (
-                <ActivityIndicator color="#FFF" size="small" />
+                <View style={styles.demoBtnInner}>
+                  <ActivityIndicator color="#FFF" size="small" />
+                  <Text style={styles.demoBtnText}>{Math.round(downloadProgress * 100)}%</Text>
+                </View>
               ) : (
-                <Text style={styles.demoBtnText}>Load model</Text>
+                <Text style={styles.demoBtnText}>Load model into memory</Text>
               )}
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.dataResetBtn, { borderColor: "rgba(255, 59, 48, 0.35)", marginBottom: 6 }]}
               onPress={async () => {
-                Alert.alert("Delete model", "Remove the downloaded model file from this device? You can re-download it after.", [
+                Alert.alert("Delete model", "Remove the downloaded model from this device?", [
                   { text: "Cancel", style: "cancel" },
                   {
                     text: "Delete",
@@ -408,7 +459,7 @@ export default function ProfileScreen() {
               activeOpacity={0.85}
             >
               <Trash2 size={18} color={IOS_RED} />
-              <Text style={[styles.dataResetText, { color: IOS_RED }]}>Delete model file</Text>
+              <Text style={[styles.dataResetText, { color: IOS_RED }]}>Delete downloaded model</Text>
             </TouchableOpacity>
             {downloadError ? <Text style={[styles.hint, { color: IOS_RED }]}>{downloadError}</Text> : null}
             {lastLoadError ? <Text style={[styles.hint, { color: IOS_RED }]}>{`Load error: ${lastLoadError}`}</Text> : null}
@@ -426,71 +477,13 @@ export default function ProfileScreen() {
                   <Text style={styles.demoBtnText}>{Math.round(downloadProgress * 100)}%</Text>
                 </View>
               ) : (
-                <Text style={styles.demoBtnText}>Download Phi 3.5 mini (~1.4 GB)</Text>
+                <Text style={styles.demoBtnText}>Download model (~1.4 GB)</Text>
               )}
             </TouchableOpacity>
             {downloadError ? <Text style={[styles.hint, { color: IOS_RED }]}>{downloadError}</Text> : null}
           </>
         )}
       </GlassSurface>
-
-      {/* Section 5 — Developer / Testing (only in __DEV__) */}
-      {__DEV__ && (
-        <>
-          <TouchableOpacity
-            style={styles.devSectionHeader}
-            onPress={() => setDevSectionExpanded((e) => !e)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.sectionLabel, { color: textSecondary }]}>Developer</Text>
-            {devSectionExpanded ? (
-              <ChevronDown size={18} color={textSecondary} />
-            ) : (
-              <ChevronRight size={18} color={textSecondary} />
-            )}
-          </TouchableOpacity>
-          {devSectionExpanded && (
-            <View style={styles.devSection}>
-              <TouchableOpacity
-                style={[styles.demoBtn, { backgroundColor: IOS_BLUE }]}
-                onPress={handleCheckConnection}
-                disabled={checkingConnection}
-              >
-                {checkingConnection ? (
-                  <ActivityIndicator color="#FFF" size="small" />
-                ) : (
-                  <Text style={styles.demoBtnText}>Check connection</Text>
-                )}
-              </TouchableOpacity>
-              <Text style={[styles.hint, { color: textSecondary }]}>GET /health</Text>
-              <TouchableOpacity
-                style={[styles.demoBtn, { backgroundColor: IOS_BLUE }]}
-                onPress={loadDemoData}
-                disabled={loading}
-              >
-                {loading ? (
-                  <ActivityIndicator color="#FFF" size="small" />
-                ) : (
-                  <Text style={styles.demoBtnText}>Load demo data</Text>
-                )}
-              </TouchableOpacity>
-              <Text style={[styles.hint, { color: textSecondary }]}>Seed sample receipts</Text>
-              <TouchableOpacity
-                style={[styles.demoBtn, { backgroundColor: "#FF9500" }]}
-                onPress={handleSeedTestGroup}
-                disabled={seeding}
-              >
-                {seeding ? (
-                  <ActivityIndicator color="#FFF" size="small" />
-                ) : (
-                  <Text style={styles.demoBtnText}>Create test group</Text>
-                )}
-              </TouchableOpacity>
-              <Text style={[styles.hint, { color: textSecondary }]}>Creates populated group and opens it</Text>
-            </View>
-          )}
-        </>
-      )}
 
       <View style={{ height: 100 }} />
     </ScrollView>
@@ -552,7 +545,7 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.sectionGap,
   },
   privacyRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 6 },
-  privacyTitle: { fontSize: 16, fontWeight: "600" },
+  privacyTitle: { fontSize: 16, fontWeight: "600", marginBottom: 6 },
   privacyStatus: { fontSize: 14, marginBottom: 12 },
   privacyToggleRow: {
     flexDirection: "row",
@@ -580,13 +573,9 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.sectionGap,
   },
   dataResetText: { fontSize: 15, fontWeight: "600" },
-  devSectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  devSection: { marginBottom: SPACING.sectionGap },
+  llmHeaderRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
+  statusRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
+  statusRowText: { fontSize: 14, flex: 1 },
   demoBtn: {
     paddingVertical: 14,
     borderRadius: RADIUS.button,
@@ -597,5 +586,15 @@ const styles = StyleSheet.create({
   },
   demoBtnInner: { flexDirection: "row", alignItems: "center", gap: 10 },
   demoBtnText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" },
-  hint: { fontSize: 12, marginBottom: 12 },
+  secondaryBtn: {
+    marginTop: 8,
+    paddingVertical: 12,
+    borderRadius: RADIUS.button,
+    borderWidth: 2,
+    alignItems: "center",
+    minHeight: 48,
+    justifyContent: "center",
+  },
+  secondaryBtnText: { fontSize: 15, fontWeight: "700" },
+  hint: { fontSize: 12, marginBottom: 12, lineHeight: 17 },
 });

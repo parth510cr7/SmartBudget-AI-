@@ -9,7 +9,7 @@ import {
   Alert,
 } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
-import { ListChecks, ChevronRight, Search, Trash2 } from "lucide-react-native";
+import { ListChecks, ChevronRight, Sparkles, Trash2 } from "lucide-react-native";
 import { useStore } from "../../src/store/useStore";
 import { GlassSurface } from "../../src/components/GlassSurface";
 import { getTheme, IOS_BLUE, IOS_GREEN, IOS_RED, LIQUID } from "../../src/theme";
@@ -45,7 +45,7 @@ export default function SmartListScreen() {
   function loadIntoBasket(list: SmartListRow) {
     const names = list.items.map((i) => i.name.trim()).filter(Boolean);
     setBasket(names.length > 0 ? names : []);
-    router.push({ pathname: "/(tabs)/search", params: { freshBasket: "1" } });
+    router.push({ pathname: "/(tabs)/assistant", params: { freshBasket: "1" } });
   }
 
   function confirmDelete(list: SmartListRow) {
@@ -70,16 +70,16 @@ export default function SmartListScreen() {
     <ScrollView style={[styles.container, { backgroundColor: bg }]} contentContainerStyle={styles.content}>
       <Text style={[styles.title, { color: textPrimary }]}>Saved lists</Text>
       <Text style={[styles.subtitle, { color: textSecondary }]}>
-        Lists you saved from Search → your basket → Save. Tap a row to load it into your basket and open Search, or use
-        the button below for Load saved and Finalize.
+        Lists you saved from Assistant → your basket → Save. Tap a row to load it into your basket and open Assistant, or
+        use the button below for Load saved and Finalize.
       </Text>
 
-      <TouchableOpacity onPress={() => router.push("/(tabs)/search")} activeOpacity={0.85}>
+      <TouchableOpacity onPress={() => router.push("/(tabs)/assistant")} activeOpacity={0.85}>
         <GlassSurface isDark={isDarkMode} borderRadius={16} style={[LIQUID.shadow, styles.linkRowOuter]}>
           <View style={styles.linkRowInner}>
-            <Search size={22} color={IOS_BLUE} />
+            <Sparkles size={22} color={IOS_BLUE} />
             <View style={styles.linkTextWrap}>
-              <Text style={[styles.linkTitle, { color: textPrimary }]}>Search</Text>
+              <Text style={[styles.linkTitle, { color: textPrimary }]}>Assistant</Text>
               <Text style={[styles.linkSub, { color: textSecondary }]}>Load saved, add items, Finalize</Text>
             </View>
             <ChevronRight size={22} color={textSecondary} />
@@ -93,7 +93,7 @@ export default function SmartListScreen() {
         <GlassSurface isDark={isDarkMode} borderRadius={16} style={[LIQUID.shadow, styles.emptyCard]}>
           <View style={styles.emptyCardInner}>
             <Text style={[styles.emptyText, { color: textSecondary }]}>
-              No saved lists yet. On the Search tab, add items to your basket and tap Save.
+              No saved lists yet. On the Assistant tab, add items to your basket and tap Save.
             </Text>
           </View>
         </GlassSurface>
